@@ -27,7 +27,7 @@ detailed plasma chemistry.
 | Domain | Model | Primary references |
 |---|---|---|
 | Magnetostatics | Filament/ring mutual inductance by complete elliptic integrals (Maxwell), assembled into dense L matrix over secondary sections, primary turns and top-load ring | acmi [4], Knight [10] |
-| Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1 | tssp [3], Medhurst [9], Voitkāns [7] |
+| Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1. Winding former permittivity is not yet modelled | tssp [3], Medhurst [9], Voitkāns [7] |
 | Conductor loss | Skin and proximity AC resistance per section (Fraga/Prados/Chen, Medhurst Φ factor); tank capacitor ESR; form dielectric loss | [11], [9] |
 | Secondary dynamics | N-section coupled L/C ladder from the matrices above; modal reduction to M eigenmodes for time domain; full ladder for voltage-profile studies | tssp [3], Voitkāns [7], Denicolai [1] |
 | Primary circuit + bridge | Half/full bridge as piecewise-linear switch states; Vce(sat) = V0 + r·I; body/anti-parallel diode; dead time; DC bus C with rectifier ripple | Denicolai [1], de Queiroz [5], [6] |
@@ -63,6 +63,23 @@ detailed plasma chemistry.
 5. Eigen-solve of the ladder (generalised problem with L and C) →
    f_res, mode shapes v_m(z), effective inductance/capacitance per mode, k
    between primary and mode 1. Keep M = 4–16 modes for time domain.
+
+### 3.1a Known phase-1 residuals
+
+Predicted f_res runs 2–9 % above Medhurst's C_L across l/D = 1..5, one-signed
+(model capacitance always low). Medhurst wound every coil on a solid polystyrene
+rod, εr = 2.56 (Knight [10] §4), so his C_L carries a former dielectric this
+air-only model has no term for; the residual has the right sign and roughly the
+right size for that omission. Two consequences: the electrostatic solve needs a
+dielectric region before the Medhurst comparison means anything at the 1–2 %
+level, and the air-cored measured coils of tssp and Denicolai are the better
+phase-1 benchmark. The published Medhurst table in circulation is itself up to
+8.8 % above Medhurst's own regression for l/D ≥ 2.5, so part of that column is
+transcription rather than physics.
+
+Mode 1 converges to 0.1 % by 200 sections. Higher modes converge more slowly —
+the 4th is still 6 % short of the uniform-line 1:3:5:7 ratio at 400 sections —
+which sets the section count needed for the M = 4..16 modal reduction of §3.3.
 
 ### 3.2 Time domain: piecewise-LTI exponential integrator
 
@@ -192,7 +209,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Single-ring and coaxial-loop inductance | closed form | 1e-10 rel |
 | Solenoid inductance | Wheeler, acmi published examples | 1 % |
 | Isolated sphere and toroid capacitance | closed form; Kelvin image series for a sphere over a plane | 0.25/N, 1 % |
-| Solenoid f_res | Medhurst C_L via the eigen-solve, tssp measured coils, Denicolai measurements [1] | 1–2 % |
+| Solenoid f_res | Medhurst C_L via the eigen-solve | air model runs +2 to +9 % high, see below |
+| Solenoid f_res | tssp measured coils, Denicolai measurements [1] | 1–2 % |
 | Coupling k | acmi | 1 % |
 | Lumped 4th-order DRSSTC transient | ngspice via PySpice; de Queiroz mode ratios 1:2:3, 1:3:5 [5] | numerical |
 | Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |
@@ -216,7 +234,9 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 ## 7. Roadmap
 
 0. Repo scaffold, CI, Docker, schema, backend switch.
-1. EM matrices, eigen-solve, validation against tssp/acmi/Medhurst/Wheeler.
+1. EM matrices, eigen-solve, validation against acmi/Wheeler/Medhurst.
+1a. Dielectric former in the MoM, and validation against air-cored measured
+   coils (tssp, Denicolai), to close the Medhurst residual below.
 2. Circuit + driver + exponential integrator, SSTC and DRSSTC, SPICE parity.
 3. Streamer load and length dynamics, breakout, spark-length calibration.
 4. Thermal and loss models, QCW modulation, MIDI interrupter.

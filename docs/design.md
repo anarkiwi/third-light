@@ -65,19 +65,34 @@ detailed plasma chemistry.
 
 State x = [i_p, v_Cp, v_bus, modal q_m, q̇_m, i_lead, thermal states...].
 Each bridge configuration σ ∈ {+V, −V, freewheel, open} and each diode
-conduction state gives a constant (A_σ, B_σ). Exact discretisation for
-step h:
+conduction state gives a constant (A_σ, B_σ). Instead of tabulating propagators
+at a fixed step and its binary subdivisions, each A_σ is diagonalised once per
+design:
 
-    [Φ_σ  Γ_σ] = expm([[A_σ, B_σ], [0, 0]] · h)
-    x_{n+1} = Φ_σ x_n + Γ_σ u_n
+    A_σ = V_σ Λ_σ V_σ^-1
+    Φ_σ(t) = V_σ e^{Λ_σ t} V_σ^-1
+    Γ_σ(t) = V_σ Λ_σ^-1 (e^{Λ_σ t} − I) V_σ^-1 B_σ   (rows with Λ ≈ 0 use t)
+    x_{n+1} = Φ_σ(h) x_n + Γ_σ(h) u_n
 
-Φ and Γ are precomputed per design for h and for h/2^j, j = 1..J (J ≈ 8).
-Switching events (zero-crossings of the phase-led feedback signal plus gate
-delay, dead time, interrupter edges, diode turn-on/off) are located by
-interpolating the relevant linear functional of x within the step; the step
-is then split using the binary-subdivided propagators, so event timing is
-exact to h/2^J with at most J extra matvecs. No re-factorisation is ever
-needed inside a run. h = T_res/256 (≈ 13 ns at 300 kHz).
+The propagator is then available at *arbitrary* t for one complex diagonal
+scaling and two n×n matvecs. Switching events (zero-crossings of the phase-led
+feedback signal plus gate delay, dead time, interrupter edges, diode turn-on
+and turn-off) are located by interpolating the relevant linear functional of x
+within the step and propagating by the exact sub-step, so event timing is
+exact rather than quantised to h/2^J; a step containing an event costs two
+propagations instead of one plus J. No re-factorisation is ever needed inside a
+run. h = T_res/256 (≈ 13 ns at 300 kHz).
+
+Storage per design is one complex n×n pair (V_σ, V_σ^-1) and one complex n
+eigenvalue vector per switch state, against (J+1) real n×n propagators for the
+tabulated scheme: about 5× less at J = 8, and independent of the event-timing
+accuracy demanded.
+
+RLC bridge states are diagonalisable in practice but A_σ can be defective or
+near-defective. The decomposition is accepted only when cond(V_σ) is below a
+threshold; otherwise that state falls back to a scaling-and-squaring Padé
+propagator tabulated at h and h/2^j, j = 1..8, with bisection on the event
+time. Both paths are checked against `scipy.linalg.expm`.
 
 Nonlinear branches (streamer, saturating Vce, corona) enter as current
 injections evaluated from x_n with their own small explicit ODE. The streamer
@@ -89,7 +104,9 @@ Slow inputs (QCW bus ramp, MIDI PRF schedule) are zero-order-held per step.
 Justification: the circuit is linear except at switch instants and the top
 node, so a matrix-exponential scheme is both cheaper and more accurate than
 generic stiff ODE integration; it also removes the trapezoidal ringing SPICE
-shows on hard switching.
+shows on hard switching. Diagonalising rather than tabulating keeps that
+exactness at the event instants, where the tabulated scheme is only accurate
+to h/2^J.
 
 ### 3.3 GPU execution model
 
@@ -99,17 +116,26 @@ Two paths, same algorithm:
   memory-bound, ~1 ms of coil time per second of GPU time at 300 kHz.
 * Batch of B designs, modal model (n ≤ 32): one warp per design, one lane
   per state row, matvec by warp-shuffle reduction, per-design event handling
-  without divergence across warps. Φ/Γ tensors [B, S, n, n] in shared memory
-  per block. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
+  without divergence across warps. The per-design eigenbasis for S ≈ 4 switch
+  states is 2·S·n² complex64 = 64 KB — far over the shared-memory budget, so it
+  stays in global memory and streams through L1/L2, with only the state vector
+  and the S·n eigenvalues resident per warp. B = 10^4 designs is then 0.64 GB
+  of basis, which sets the practical batch size; wider sweeps are chunked. The
+  tabulated-propagator alternative would need 2.9 GB for the same batch and
+  would not fit. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
 
 Thermal states use their own exact-exponential update between bursts, with
 per-burst energies as impulses, because their time constants are 10^3–10^6
 times the electrical ones.
 
-Elliptic integrals, potential coefficients and DBM growth are Numba CUDA
-kernels; linear algebra is CuPy (cuBLAS/cuSOLVER). CPU fallback is the same
-source under `numba.njit` with NumPy arrays selected by an array-namespace
-switch (`xp`).
+Elliptic integrals, potential coefficients, event stepping and DBM growth are
+written as scalar and flat-array functions compiled by `numba.njit` for the CPU
+and `numba.cuda.jit` for the GPU from one source; dense linear algebra
+(Cholesky, eigen-solve, matvec) goes through an array-namespace handle `xp`
+bound to NumPy/SciPy or CuPy. The two mechanisms are deliberately separate:
+Numba's CPU and CUDA targets do not share a namespace, so kernels are
+dispatched per backend and only the library-level linear algebra is
+namespace-generic.
 
 Precision: float64 for matrix assembly, inversion and eigen-solve (P is
 ill-conditioned for fine sections); float32 optional for stepping, gated by a
@@ -130,6 +156,7 @@ replaces the ℓ scalar with the DBM tree and derives C_s from segment charges.
 
 ```
 thirdlight/
+  backend.py       array-namespace handle and njit/cuda.jit kernel dispatch
   geometry.py      coil, primary, top-load and ground descriptions; discretisation
   em/inductance.py ring mutual/self inductance kernels, L matrix
   em/capacitance.py ring-charge MoM, P/C matrices, surface field
@@ -164,6 +191,7 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |
 | Spark length vs power | Freau law (SGTC) [16]; published DRSSTC/QCW data [13], [14] | within data spread |
 | IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
+| Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 
 ## 6. Engineering constraints

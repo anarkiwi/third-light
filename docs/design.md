@@ -328,7 +328,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    needs no optional native dependency in CI and is checked on every interval
    rather than on one waveform.
 3. Streamer load and length dynamics, breakout, spark-length calibration.
-4. Thermal and loss models, QCW modulation, MIDI interrupter.
+4. Thermal and loss models. The QCW bus ramp and the MIDI interrupter came
+   with the driver in phase 2, so what is left here is the thermal side.
 5. Batched GPU sweeps and optimisation front end.
 6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
 

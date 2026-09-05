@@ -11,7 +11,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import brentq
 
-from thirdlight.circuit import OPEN, Network
+from thirdlight.circuit import Network
+from thirdlight.circuit.devices import polarity
 from thirdlight.solver.propagator import Propagator
 
 _XTOL = 1e-14
@@ -44,8 +45,8 @@ class Result:
     @property
     def drive(self):
         """Bridge output across the tank, less its differential resistance, V."""
-        polarity = np.where(self.state < OPEN * 2, 1.0 - 2.0 * (self.state % 2), 0.0)
-        return polarity * self.network.bridge.gain * self.bus_voltage + self.u[:, 0]
+        swing = polarity(self.state) * self.network.bridge.gain
+        return swing * self.bus_voltage + self.u[:, 0]
 
     @property
     def tank_voltage(self):

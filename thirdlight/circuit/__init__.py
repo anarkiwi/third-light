@@ -1,6 +1,6 @@
 """Bridge, tank and the piecewise-linear primary/modal state-space builder."""
 
-from thirdlight.circuit.devices import DIODE, IGBT, OPEN, Bridge, Switch
+from thirdlight.circuit.devices import DIODE, IGBT, OPEN, Bridge, Switch, polarity
 from thirdlight.circuit.network import (
     Bus,
     Network,
@@ -19,6 +19,7 @@ __all__ = [
     "Network",
     "Switch",
     "Tank",
+    "polarity",
     "from_design",
     "from_modes",
     "tune",

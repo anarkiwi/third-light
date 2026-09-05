@@ -17,6 +17,7 @@ from thirdlight.circuit import (
     Tank,
     from_design,
     from_modes,
+    polarity,
     tune,
 )
 from thirdlight.em import inductance, losses
@@ -437,3 +438,12 @@ def test_the_bus_voltage_reads_the_state_or_the_supply():
     assert stiff.bus_voltage(np.zeros(stiff.size), V_BUS) == V_BUS
     x = np.arange(float(reservoir.size))
     assert reservoir.bus_voltage(x, V_BUS) == x[-1]
+
+
+@pytest.mark.parametrize("gate", [-1, 0, 1])
+@pytest.mark.parametrize("current", [-3.0, 0.0, 3.0])
+def test_the_state_row_recovers_the_polarity_it_was_built_at(gate, current):
+    """polarity inverts index, so a recorded row reports the swing it stood at."""
+    net = tuned(0.2, bridge=REAL)
+    sigma = net.state(gate, current)[1]
+    assert polarity(net.index(gate, current)) == sigma

@@ -10,6 +10,8 @@ primary current at all and stands at no polarity.
 
 from dataclasses import dataclass
 
+import numpy as np
+
 IGBT = 0
 DIODE = 1
 OPEN = 2
@@ -19,6 +21,12 @@ STATES = 5
 def index(conduction, sigma):
     """Row of the state-matrix stack for a conduction kind and bridge polarity."""
     return 2 * conduction + (sigma < 0.0)
+
+
+def polarity(row):
+    """Bridge polarity of a state-matrix row, 0 where the bridge is blocked."""
+    row = np.asarray(row)
+    return np.where(row < 2 * OPEN, 1.0 - 2.0 * (row % 2), 0.0)
 
 
 @dataclass(frozen=True)

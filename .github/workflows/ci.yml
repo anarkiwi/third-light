@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: lint
+          load: true
+          tags: thirdlight:lint
+          cache-from: type=gha,scope=lint
+          cache-to: type=gha,mode=max,scope=lint
+      - run: docker run --rm thirdlight:lint
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: cpu
+          load: true
+          build-args: PYTHON_VERSION=${{ matrix.python-version }}
+          tags: thirdlight:cpu-${{ matrix.python-version }}
+          cache-from: type=gha,scope=cpu-${{ matrix.python-version }}
+          cache-to: type=gha,mode=max,scope=cpu-${{ matrix.python-version }}
+      - run: docker run --rm thirdlight:cpu-${{ matrix.python-version }}
+
+  cuda:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: cuda
+          load: true
+          tags: thirdlight:cuda

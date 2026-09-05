@@ -27,8 +27,8 @@ detailed plasma chemistry.
 | Domain | Model | Primary references |
 |---|---|---|
 | Magnetostatics | Filament/ring mutual inductance by complete elliptic integrals (Maxwell), assembled into dense L matrix over secondary sections, primary turns and top-load ring | acmi [4], Knight [10] |
-| Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1 | tssp [3], Medhurst [9], Voitkāns [7] |
-| Conductor loss | Skin and proximity AC resistance per section (Fraga/Prados/Chen, Medhurst Φ factor); tank capacitor ESR; form dielectric loss | [11], [9] |
+| Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1. Winding former permittivity is not yet modelled | tssp [3], Medhurst [9], Voitkāns [7] |
+| Conductor loss | Skin and proximity AC resistance per section from the exact cylinder diffusion solution (Butterworth [27]); tank capacitor ESR; form dielectric loss | [27], [11], [9] |
 | Secondary dynamics | N-section coupled L/C ladder from the matrices above; modal reduction to M eigenmodes for time domain; full ladder for voltage-profile studies | tssp [3], Voitkāns [7], Denicolai [1] |
 | Primary circuit + bridge | Half/full bridge as piecewise-linear switch states; Vce(sat) = V0 + r·I; body/anti-parallel diode; dead time; DC bus C with rectifier ripple | Denicolai [1], de Queiroz [5], [6] |
 | Driver/control | Primary current transformer feedback, phase-lead (UD2.x style), comparator + gate delay, interrupter (pulse width, PRF, MIDI note → PRF), QCW bus ramp or phase-shift modulation | Ward [12], Loneoceans [13], Kaizer [14], Burnett [15] |
@@ -53,31 +53,79 @@ detailed plasma chemistry.
 3. P matrix: ring-charge potential coefficients (elliptic integral K), image
    rings for the ground plane, optional grounded strike ring. C = P^-1 by
    Cholesky (P is SPD) in float64 via cuSOLVER (`cupy.linalg`), batched.
-   Section self-capacitance plus mutual capacitances reproduce Medhurst's
-   curve as a cross-check, not as an input.
+   Medhurst's C_L is *not* this matrix: it is the lumped equivalent of the
+   resonating coil, and at l/D = 1, D = 10 cm his 4.6 pF is below the 5.56 pF of
+   the inscribed sphere, so no static capacitance can equal it. The static
+   uniform-potential extraction is checked against the sphere and toroid instead;
+   Medhurst is a cross-check on f_res after step 5.
 4. R vector: per-section AC resistance at f_res from [11]; iterated once after
    the first eigen-solve because R depends on f.
 5. Eigen-solve of the ladder (generalised problem with L and C) →
    f_res, mode shapes v_m(z), effective inductance/capacitance per mode, k
    between primary and mode 1. Keep M = 4–16 modes for time domain.
 
+### 3.1a Known phase-1 residuals
+
+Predicted f_res runs 2–9 % above Medhurst's C_L across l/D = 1..5, one-signed
+(model capacitance always low). Medhurst wound every coil on a solid polystyrene
+rod, εr = 2.56 (Knight [10] §4), so his C_L carries a former dielectric this
+air-only model has no term for; the residual has the right sign and roughly the
+right size for that omission. Two consequences: the electrostatic solve needs a
+dielectric region before the Medhurst comparison means anything at the 1–2 %
+level, and the air-cored measured coils of tssp and Denicolai are the better
+phase-1 benchmark. The published Medhurst table in circulation is itself up to
+8.8 % above Medhurst's own regression for l/D ≥ 2.5, so part of that column is
+transcription rather than physics.
+
+Winding AC resistance is exact for skin effect and for proximity in a uniform
+transverse field, but the uniform-field formulation omits the neighbouring turns'
+eddy-current reaction. That is immaterial while the wire-diameter-to-pitch ratio
+d/s ≤ 0.2 (within 1 % of Medhurst's Φ) but grows to +16 % at d/s = 0.5 and +74 %
+at d/s = 1. Butterworth quantifies exactly this: he gives 5.94 for a close-wound
+infinite solenoid ignoring the eddy field against 3.41 with it, and the model
+here returns 1 + π²/2 = 5.93. The model also carries no l/D dependence, over
+which Medhurst's Φ spans 23 % at d/s = 0.8. Close-wound secondaries therefore get
+their R over-predicted, so Q is a lower bound. The fix is to interpolate
+Medhurst's measured Φ above d/s = 0.3 rather than to extend the theory: his
+d/s ≤ 0.3 and l/D ≥ 8 cells are themselves computed from Butterworth, so
+validating a corrected model there would be circular.
+
+Mode 1 converges to 0.1 % by 200 sections. Higher modes converge more slowly —
+the 4th is still 6 % short of the uniform-line 1:3:5:7 ratio at 400 sections —
+which sets the section count needed for the M = 4..16 modal reduction of §3.3.
+
 ### 3.2 Time domain: piecewise-LTI exponential integrator
 
 State x = [i_p, v_Cp, v_bus, modal q_m, q̇_m, i_lead, thermal states...].
 Each bridge configuration σ ∈ {+V, −V, freewheel, open} and each diode
-conduction state gives a constant (A_σ, B_σ). Exact discretisation for
-step h:
+conduction state gives a constant (A_σ, B_σ). Instead of tabulating propagators
+at a fixed step and its binary subdivisions, each A_σ is diagonalised once per
+design:
 
-    [Φ_σ  Γ_σ] = expm([[A_σ, B_σ], [0, 0]] · h)
-    x_{n+1} = Φ_σ x_n + Γ_σ u_n
+    A_σ = V_σ Λ_σ V_σ^-1
+    Φ_σ(t) = V_σ e^{Λ_σ t} V_σ^-1
+    Γ_σ(t) = V_σ Λ_σ^-1 (e^{Λ_σ t} − I) V_σ^-1 B_σ   (rows with Λ ≈ 0 use t)
+    x_{n+1} = Φ_σ(h) x_n + Γ_σ(h) u_n
 
-Φ and Γ are precomputed per design for h and for h/2^j, j = 1..J (J ≈ 8).
-Switching events (zero-crossings of the phase-led feedback signal plus gate
-delay, dead time, interrupter edges, diode turn-on/off) are located by
-interpolating the relevant linear functional of x within the step; the step
-is then split using the binary-subdivided propagators, so event timing is
-exact to h/2^J with at most J extra matvecs. No re-factorisation is ever
-needed inside a run. h = T_res/256 (≈ 13 ns at 300 kHz).
+The propagator is then available at *arbitrary* t for one complex diagonal
+scaling and two n×n matvecs. Switching events (zero-crossings of the phase-led
+feedback signal plus gate delay, dead time, interrupter edges, diode turn-on
+and turn-off) are located by interpolating the relevant linear functional of x
+within the step and propagating by the exact sub-step, so event timing is
+exact rather than quantised to h/2^J; a step containing an event costs two
+propagations instead of one plus J. No re-factorisation is ever needed inside a
+run. h = T_res/256 (≈ 13 ns at 300 kHz).
+
+Storage per design is one complex n×n pair (V_σ, V_σ^-1) and one complex n
+eigenvalue vector per switch state, against (J+1) real n×n propagators for the
+tabulated scheme: about 5× less at J = 8, and independent of the event-timing
+accuracy demanded.
+
+RLC bridge states are diagonalisable in practice but A_σ can be defective or
+near-defective. The decomposition is accepted only when cond(V_σ) is below a
+threshold; otherwise that state falls back to a scaling-and-squaring Padé
+propagator tabulated at h and h/2^j, j = 1..8, with bisection on the event
+time. Both paths are checked against `scipy.linalg.expm`.
 
 Nonlinear branches (streamer, saturating Vce, corona) enter as current
 injections evaluated from x_n with their own small explicit ODE. The streamer
@@ -89,7 +137,9 @@ Slow inputs (QCW bus ramp, MIDI PRF schedule) are zero-order-held per step.
 Justification: the circuit is linear except at switch instants and the top
 node, so a matrix-exponential scheme is both cheaper and more accurate than
 generic stiff ODE integration; it also removes the trapezoidal ringing SPICE
-shows on hard switching.
+shows on hard switching. Diagonalising rather than tabulating keeps that
+exactness at the event instants, where the tabulated scheme is only accurate
+to h/2^J.
 
 ### 3.3 GPU execution model
 
@@ -99,21 +149,34 @@ Two paths, same algorithm:
   memory-bound, ~1 ms of coil time per second of GPU time at 300 kHz.
 * Batch of B designs, modal model (n ≤ 32): one warp per design, one lane
   per state row, matvec by warp-shuffle reduction, per-design event handling
-  without divergence across warps. Φ/Γ tensors [B, S, n, n] in shared memory
-  per block. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
+  without divergence across warps. The per-design eigenbasis for S ≈ 4 switch
+  states is 2·S·n² complex64 = 64 KB — far over the shared-memory budget, so it
+  stays in global memory and streams through L1/L2, with only the state vector
+  and the S·n eigenvalues resident per warp. B = 10^4 designs is then 0.64 GB
+  of basis, which sets the practical batch size; wider sweeps are chunked. The
+  tabulated-propagator alternative would need 2.9 GB for the same batch and
+  would not fit. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
 
 Thermal states use their own exact-exponential update between bursts, with
 per-burst energies as impulses, because their time constants are 10^3–10^6
 times the electrical ones.
 
-Elliptic integrals, potential coefficients and DBM growth are Numba CUDA
-kernels; linear algebra is CuPy (cuBLAS/cuSOLVER). CPU fallback is the same
-source under `numba.njit` with NumPy arrays selected by an array-namespace
-switch (`xp`).
+Elliptic integrals, potential coefficients, event stepping and DBM growth are
+written as scalar and flat-array functions compiled by `numba.njit` for the CPU
+and `numba.cuda.jit` for the GPU from one source; dense linear algebra
+(Cholesky, eigen-solve, matvec) goes through an array-namespace handle `xp`
+bound to NumPy/SciPy or CuPy. The two mechanisms are deliberately separate:
+Numba's CPU and CUDA targets do not share a namespace, so kernels are
+dispatched per backend and only the library-level linear algebra is
+namespace-generic.
 
-Precision: float64 for matrix assembly, inversion and eigen-solve (P is
-ill-conditioned for fine sections); float32 optional for stepping, gated by a
-conservation-of-energy check on a lossless test circuit.
+Precision: float64 for matrix assembly, inversion and eigen-solve; float32
+optional for stepping, gated by a conservation-of-energy check on a lossless test
+circuit. P conditioning is benign — cond(P) grows linearly at about 3.3 per ring,
+reaching only 1.4e3 at N = 400 — so Cholesky retains twelve digits. The real
+failure mode is geometric: P loses positive definiteness when rings overlap
+(conductor radius above the ring spacing), which surfaces as a Cholesky error
+rather than silent error.
 
 ### 3.4 Streamer length dynamics
 
@@ -130,6 +193,7 @@ replaces the ℓ scalar with the DBM tree and derives C_s from segment charges.
 
 ```
 thirdlight/
+  backend.py       array-namespace handle and njit/cuda.jit kernel dispatch
   geometry.py      coil, primary, top-load and ground descriptions; discretisation
   em/inductance.py ring mutual/self inductance kernels, L matrix
   em/capacitance.py ring-charge MoM, P/C matrices, surface field
@@ -157,13 +221,17 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 |---|---|---|
 | Single-ring and coaxial-loop inductance | closed form | 1e-10 rel |
 | Solenoid inductance | Wheeler, acmi published examples | 1 % |
-| Solenoid self-capacitance / f_res | Medhurst, tssp measured coils, Denicolai measurements [1] | 1–2 % |
-| Toroid capacitance | published isolated-toroid formula and FEM values | 3 % |
+| Isolated sphere and toroid capacitance | closed form; Kelvin image series for a sphere over a plane | 0.25/N, 1 % |
+| Solenoid f_res | Medhurst C_L via the eigen-solve | air model runs +2 to +9 % high, see below |
+| Solenoid f_res | tssp measured coils, Denicolai measurements [1] | 1–2 % |
 | Coupling k | acmi | 1 % |
 | Lumped 4th-order DRSSTC transient | ngspice via PySpice; de Queiroz mode ratios 1:2:3, 1:3:5 [5] | numerical |
 | Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |
 | Spark length vs power | Freau law (SGTC) [16]; published DRSSTC/QCW data [13], [14] | within data spread |
+| Winding AC resistance | Butterworth's Tables I and II [27]; Medhurst Φ [9] | 5e-4 on Butterworth; 1 % for d/s ≤ 0.2, see §3.1a |
+| Unloaded secondary Q | Denicolai measured 326 at 65.6 kHz [1]; Kaizer tabulations [14] | within the published band |
 | IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
+| Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 
 ## 6. Engineering constraints
@@ -181,7 +249,10 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 ## 7. Roadmap
 
 0. Repo scaffold, CI, Docker, schema, backend switch.
-1. EM matrices, eigen-solve, validation against tssp/acmi/Medhurst/Wheeler.
+1. EM matrices, eigen-solve, validation against acmi/Wheeler/Medhurst.
+1a. Dielectric former in the MoM, and validation against air-cored measured
+   coils (tssp, Denicolai), to close the Medhurst f_res residual; Medhurst Φ
+   interpolation for close-wound AC resistance. Both are documented in §3.1a.
 2. Circuit + driver + exponential integrator, SSTC and DRSSTC, SPICE parity.
 3. Streamer load and length dynamics, breakout, spark-length calibration.
 4. Thermal and loss models, QCW modulation, MIDI interrupter.
@@ -215,7 +286,7 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 8. T. Fritz, streamer load model (220 kΩ + ~1 pF/ft), Tesla Coil Mailing List, 2002–2005. https://www.pupman.com/listarchives/2005/Feb/msg00064.html
 9. R. G. Medhurst, "H.F. Resistance and Self-Capacitance of Single-Layer Solenoids," *Wireless Engineer*, Feb./Mar. 1947.
 10. D. W. Knight, "The self-resonance and self-capacitance of solenoid coils" and "An introduction to the art of solenoid inductance calculation." https://hamwaves.com/inductance/doc/knight.p1.pdf
-11. E. Fraga, C. Prados, D.-X. Chen, "Practical Model and Calculation of AC Resistance of Long Solenoids," *IEEE Trans. Magn.* 34(1), 1998.
+11. E. Fraga, C. Prados, D.-X. Chen, "Practical Model and Calculation of AC Resistance of Long Solenoids," *IEEE Trans. Magn.* 34(1), 205–212, 1998. An equivalent-tube model, not a skin/proximity split; not obtainable open access, so [27] is implemented instead.
 12. S. Ward, "A General Guide to DRSSTC Design"; Universal Driver UD2.x. https://www.stevehv.4hv.org/drsstc_design.htm , https://github.com/WaskaLabs/Universal_Driver_29_X
 13. Loneoceans Laboratories, UD2.7C driver and ramped/QCW SSTC notes. https://loneoceans.com/labs/sales/ud27/index.htm , https://www.loneoceans.com/labs/sstc3/
 14. Kaizer Power Electronics, DRSSTC design guide and phase-lead test notes. https://kaizerpowerelectronics.dk/tesla-coils/drsstc-design-guide/
@@ -231,3 +302,4 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 24. "Simulation and Analysis of the Optimal Electric Field from Modifications to the Winding Design for the Tesla Transformer," *Energies* 18(2), 339, 2025 (FEM of secondary field). https://www.mdpi.com/1996-1073/18/2/339
 25. openEMS. https://www.openems.de/ ; CuPy. https://docs.cupy.dev/ ; Numba CUDA. https://numba.readthedocs.io/ ; NVIDIA Warp. https://developer.nvidia.com/warp-python
 26. JavaTC. http://www.classictesla.com/java/javatc.html ; TeslaMap. https://www.teslamap.com/
+27. S. Butterworth, "Effective Resistance of Inductance Coils at Radio Frequency," *Experimental Wireless & The Wireless Engineer*, Apr./May 1926 (eq. 21, Tables I, II and IV). https://www.g6yb.com/g3ynh/zdocs/refs/

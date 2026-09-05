@@ -1,0 +1,22 @@
+# Mid-size DRSSTC, dimensions in metres.
+secondary:
+  radius: 0.0762
+  length: 0.508
+  turns: 1200
+  wire_diameter: 0.00040
+  base: 0.05
+primary:
+  inner_radius: 0.115
+  turns: 5.5
+  pitch: 0.012
+  rise: 0.0
+  base: 0.055
+  wire_diameter: 0.0064
+top_load:
+  kind: toroid
+  major_radius: 0.152
+  minor_radius: 0.0508
+  height: 0.60
+ground_plane: true
+sections: 160
+top_load_sections: 32

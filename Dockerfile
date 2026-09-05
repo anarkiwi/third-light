@@ -12,7 +12,10 @@ FROM deps AS cpu
 COPY . /src
 RUN pip install --no-cache-dir --no-deps -e .
 ENV THIRDLIGHT_BACKEND=cpu
-CMD ["pytest"]
+# First pass compiled, for numerics and timing; second interpreted, so coverage
+# can trace inside njit kernels.
+CMD ["sh", "-c", "pytest && NUMBA_DISABLE_JIT=1 pytest --cov=thirdlight \
+    --cov-report=term-missing --cov-fail-under=85"]
 
 FROM deps AS lint
 COPY . /src

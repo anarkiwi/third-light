@@ -26,8 +26,11 @@ include = ["thirdlight*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-n auto -q --cov=thirdlight --cov-report=term-missing --cov-fail-under=85"
-markers = ["cuda: requires a CUDA device"]
+addopts = "-n auto -q"
+markers = [
+    "cuda: requires a CUDA device",
+    "slow: large-size numerical test, skipped under NUMBA_DISABLE_JIT",
+]
 
 [tool.black]
 target-version = ["py311"]

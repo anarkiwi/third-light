@@ -64,4 +64,4 @@ def device(func):
     """CUDA device-function build of a :func:`kernel`, compiled on first use."""
     from numba import cuda  # pylint: disable=import-outside-toplevel
 
-    return cuda.jit(device=True, inline=True)(func.py_func)
+    return cuda.jit(device=True, inline=True)(getattr(func, "py_func", func))

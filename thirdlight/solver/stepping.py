@@ -52,23 +52,23 @@ class Result:
         return self.network.energy(self.x)
 
 
-def _crossing(prop, x, u, c, d, span, sign):
+def _crossing(prop, ends, u, functional, span, sign):
     """First time in [0, span) at which c.x + d leaves the half plane of ``sign``.
 
-    Both ends are evaluated through the propagator, as the root finder is, so a
-    functional pinned to zero at a switching instant brackets consistently; that
-    and a functional already on the far side are both due at once.
+    A functional pinned to zero at a switching instant, and one already on the
+    far side because a switch made it discontinuous, are both due at once. Both
+    ends of the span are supplied, since the caller needs the far one anyway.
     """
-
-    def value(s):
-        return c @ prop.advance(x, u, s) + d
-
-    start = value(0.0)
+    x, x_end = ends
+    c, d = functional
+    start = c @ x + d
     if start * sign < 0.0:
         return 0.0
-    if value(span) * sign >= 0.0:
+    if (c @ x_end + d) * sign >= 0.0:
         return math.inf
-    return 0.0 if start == 0.0 else brentq(value, 0.0, span, xtol=span * _XTOL)
+    if start == 0.0:
+        return 0.0
+    return brentq(lambda s: c @ prop.advance(x, u, s) + d, 0.0, span, xtol=span * _XTOL)
 
 
 def _breakout(network, gate, x, u_load, v_bus):
@@ -144,19 +144,20 @@ def simulate(network, driver, duration, step, load=None, x0=None):
             t = np.nextafter(t, math.inf)
             continue
         lead = driver.lead.functional(network.a[device], network.b, u)
-        hit_i = (
-            math.inf
-            if sign_i == 0.0
-            else _crossing(prop, x, u, unit, 0.0, span, sign_i)
-        )
+        ends = x, prop.advance(x, u, span)
+        hit_i = math.inf
+        if sign_i != 0.0:
+            hit_i = _crossing(prop, ends, u, (unit, 0.0), span, sign_i)
         if sign_fb != 0.0:
-            hit_fb = _crossing(prop, x, u, lead[0], lead[1], span, sign_fb)
+            hit_fb = _crossing(prop, ends, u, lead, span, sign_fb)
             if hit_fb < min(span, hit_i):
                 sign_fb = -sign_fb
                 seq.crossing(t + hit_fb, sign_fb)
-                span = min(span, seq.next_time() - t)
+                shortened = min(span, seq.next_time() - t)
+                if shortened < span:
+                    span, ends = shortened, (x, prop.advance(x, u, shortened))
         first = min(span, hit_i)
-        x = prop.advance(x, u, first)
+        x = ends[1] if first == span else prop.advance(x, u, first)
         t += first
         if first == hit_i:
             sign_i = 0.0

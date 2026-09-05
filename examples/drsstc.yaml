@@ -1,0 +1,38 @@
+# Mid-size DRSSTC with a full bridge and a UD2-style self-oscillating driver.
+secondary:
+  radius: 0.0762
+  length: 0.508
+  turns: 1200
+  wire_diameter: 0.00040
+  base: 0.05
+primary:
+  inner_radius: 0.115
+  turns: 5.5
+  pitch: 0.012
+  rise: 0.0
+  base: 0.055
+  wire_diameter: 0.0064
+top_load:
+  kind: toroid
+  major_radius: 0.152
+  minor_radius: 0.0508
+  height: 0.60
+ground_plane: true
+sections: 160
+top_load_sections: 32
+modes: 2
+tank:
+  tune: 1.0
+  resistance: 0.05
+bridge:
+  igbt: {v0: 1.2, r: 0.012}
+  diode: {v0: 1.0, r: 0.010}
+  full: true
+driver:
+  lead_angle: 12.0
+  delay: 0.5e-6
+  dead_time: 0.4e-6
+  bus: 340.0
+  interrupter:
+    on_time: 150.0e-6
+    frequency: 200.0

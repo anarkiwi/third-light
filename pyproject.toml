@@ -42,7 +42,7 @@ jobs = 0
 max-line-length = 100
 
 [tool.pylint."messages control"]
-disable = ["too-many-arguments", "too-many-locals", "too-few-public-methods", "duplicate-code"]
+disable = ["too-many-arguments", "too-many-positional-arguments", "too-many-locals", "too-few-public-methods", "duplicate-code"]
 
 [tool.pylint.typecheck]
 ignored-modules = ["cupy", "scipy.special", "scipy.linalg"]

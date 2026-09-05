@@ -31,4 +31,28 @@ All lengths are metres, measured from the ground plane at z = 0.
 | `top_load_sections` | rings around the top-load surface |
 | `former_sections` | bands around the former's closed meridian contour |
 
+`thirdlight.geometry.Design.from_yaml` reads the keys above. A file that also
+carries the drive sections below is a complete machine, loaded by
+`thirdlight.machine.Machine.from_yaml`; the tank capacitance and the phase lead
+are resolved against the first secondary mode at load time.
+
+| Key | Meaning |
+|---|---|
+| `modes` | secondary eigenmodes carried into the time domain, 1–16 |
+| `tank.capacitance` | primary series capacitance, F |
+| `tank.tune` | in place of `capacitance`: primary resonance as a multiple of mode 1 |
+| `tank.resistance` | primary loop resistance including tank ESR, ohm |
+| `tank.inductance` | override the primary inductance taken from the geometry |
+| `bridge.igbt.v0`, `bridge.igbt.r` | IGBT knee voltage and slope resistance |
+| `bridge.diode.v0`, `bridge.diode.r` | anti-parallel diode, same form |
+| `bridge.full` | true for a full bridge, false for a half bridge |
+| `driver.lead_angle` | current-transformer phase lead in degrees at mode 1 |
+| `driver.delay` | comparator plus gate propagation delay, s |
+| `driver.dead_time` | dead time inserted at each polarity reversal, s |
+| `driver.bus` | flat bus voltage, V, when there is no ramp |
+| `driver.ramp.initial`, `.final`, `.rise` | QCW bus envelope measured from each burst start |
+| `driver.interrupter.on_time` | burst length, s |
+| `driver.interrupter.frequency` | bursts per second |
+| `driver.interrupter.notes` | in place of `frequency`: `[[start, duration, midi note], ...]` |
+
 See `examples/` for complete designs.

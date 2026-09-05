@@ -152,8 +152,28 @@ accuracy demanded.
 RLC bridge states are diagonalisable in practice but A_σ can be defective or
 near-defective. The decomposition is accepted only when cond(V_σ) is below a
 threshold; otherwise that state falls back to a scaling-and-squaring Padé
-propagator tabulated at h and h/2^j, j = 1..8, with bisection on the event
-time. Both paths are checked against `scipy.linalg.expm`.
+propagator tabulated at h and h/2^j, j = 1..32, composed by the semigroup rule on
+the binary expansion of the requested sub-step, rounded to nearest so a dyadic
+step is exact. Both paths are checked against `scipy.linalg.expm`. The two are
+not equally conditioned: in raw [i, v] coordinates 1/c_m spans eleven decades and
+the composed Padé path sheds three digits to cancellation where the diagonalised
+path holds 1e-12, so a state that falls back wants the energy-normalised scaling
+`secondary.py` already applies to the modes.
+
+Both ends of the sub-step are exact: Φ(0) = I and Γ(0) = 0 are returned as such
+rather than reconstructed, because the event locator brackets a functional
+against the value it started from and a switching instant pins that value to
+zero.
+
+Which devices conduct is a complementarity problem, not a schedule. Both bridge
+polarities present the same network to the tank, so only three linear circuits
+exist: IGBT conducting, diode conducting, and the blocked bridge, where nothing
+is forward biased and i_p is pinned to zero with the tank charge frozen. The
+blocked state drops the primary row and column of L, leaving the modes ringing on
+their own l_m. Leaving it is a two-candidate admissibility test: a polarity is
+taken when the loop equation it implies gives a di_p/dt of that same sign, so the
+diode dead zone at |v_loop| < n_dev V0 and the reverse conduction driven by the
+modes' induced EMF both fall out rather than being cased on.
 
 Nonlinear branches (streamer, saturating Vce, corona) enter as current
 injections evaluated from x_n with their own small explicit ODE. The streamer
@@ -256,8 +276,9 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Solenoid f_res | tssp measured air-cored coils [3] | f1 within 4 % rms, overtones within 2 % rms |
 | Solenoid inductance | Denicolai's measured 80.22 mH on Thor [1] | 1.5 %, the derived-geometry spread |
 | Coupling k | acmi | 1 % |
-| Lumped 4th-order DRSSTC transient | ngspice via PySpice; de Queiroz mode ratios 1:2:3, 1:3:5 [5] | numerical |
-| Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |
+| Lumped 4th-order DRSSTC transient | every constant-mode interval against `scipy.integrate.solve_ivp` DOP853 at rtol 1e-13 | 1e-9 rel |
+| Complete energy transfer | de Queiroz integer mode ratios [5]; achievable only when n - m is odd, so (3,2) and (5,4), not (5,3) | 1e-6 of the initial energy |
+| Phase-lead/ZCS behaviour | gate edges on the current zero crossings with no delay; tau = tan(omega t_d)/omega restores them | 5 % of the gate delay |
 | Spark length vs power | Freau law (SGTC) [16]; published DRSSTC/QCW data [13], [14] | within data spread |
 | Winding AC resistance | Butterworth's Tables I and II [27] for the uncorrected model | 5e-4 |
 | Winding AC resistance | Medhurst's Table VIII over every measured d/s and l/D [9] | 1e-3 |
@@ -280,13 +301,16 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 
 ## 7. Roadmap
 
-0. Repo scaffold, CI, Docker, schema, backend switch.
-1. EM matrices, eigen-solve, validation against acmi/Wheeler/Medhurst.
+0. Repo scaffold, CI, Docker, schema, backend switch. Done.
+1. EM matrices, eigen-solve, validation against acmi/Wheeler/Medhurst. Done.
 1a. Dielectric former in the MoM, and validation against air-cored measured
    coils (tssp, Denicolai), to close the Medhurst f_res residual; Medhurst Φ
    interpolation for close-wound AC resistance. Done; both are documented in
    §3.1a.
 2. Circuit + driver + exponential integrator, SSTC and DRSSTC, SPICE parity.
+   Done, with `solve_ivp` in place of ngspice as the independent reference: it
+   needs no optional native dependency in CI and is checked on every interval
+   rather than on one waveform.
 3. Streamer load and length dynamics, breakout, spark-length calibration.
 4. Thermal and loss models, QCW modulation, MIDI interrupter.
 5. Batched GPU sweeps and optimisation front end.

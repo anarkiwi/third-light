@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage*
+coverage.xml
+.pytest_cache/
+.numba_cache/
+artifacts/

@@ -16,9 +16,19 @@ Backend selection: `THIRDLIGHT_BACKEND=cuda|cpu`, default auto.
 
 ```python
 from thirdlight.geometry import Design
+from thirdlight.secondary import resonance, coupling
+from thirdlight.em.losses import quality_factor
 
 design = Design.from_yaml("examples/sstc.yaml")
+modes = resonance(design, modes=4)
+modes.f              # resonant frequencies, Hz
+modes.v              # modal voltage profiles over modes.z
+coupling(design, modes)      # primary-to-mode k
+quality_factor(design, modes)  # unloaded Q
 ```
+
+Implemented: EM matrices and the ladder eigen-solve (roadmap phase 1). Circuit,
+driver, streamer, thermal and batched GPU sweeps are not yet built.
 
 ## Test
 

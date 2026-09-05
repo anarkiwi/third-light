@@ -28,7 +28,7 @@ detailed plasma chemistry.
 |---|---|---|
 | Magnetostatics | Filament/ring mutual inductance by complete elliptic integrals (Maxwell), assembled into dense L matrix over secondary sections, primary turns and top-load ring | acmi [4], Knight [10] |
 | Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1. Winding former permittivity is not yet modelled | tssp [3], Medhurst [9], Voitkāns [7] |
-| Conductor loss | Skin and proximity AC resistance per section (Fraga/Prados/Chen, Medhurst Φ factor); tank capacitor ESR; form dielectric loss | [11], [9] |
+| Conductor loss | Skin and proximity AC resistance per section from the exact cylinder diffusion solution (Butterworth [27]); tank capacitor ESR; form dielectric loss | [27], [11], [9] |
 | Secondary dynamics | N-section coupled L/C ladder from the matrices above; modal reduction to M eigenmodes for time domain; full ladder for voltage-profile studies | tssp [3], Voitkāns [7], Denicolai [1] |
 | Primary circuit + bridge | Half/full bridge as piecewise-linear switch states; Vce(sat) = V0 + r·I; body/anti-parallel diode; dead time; DC bus C with rectifier ripple | Denicolai [1], de Queiroz [5], [6] |
 | Driver/control | Primary current transformer feedback, phase-lead (UD2.x style), comparator + gate delay, interrupter (pulse width, PRF, MIDI note → PRF), QCW bus ramp or phase-shift modulation | Ward [12], Loneoceans [13], Kaizer [14], Burnett [15] |
@@ -76,6 +76,19 @@ level, and the air-cored measured coils of tssp and Denicolai are the better
 phase-1 benchmark. The published Medhurst table in circulation is itself up to
 8.8 % above Medhurst's own regression for l/D ≥ 2.5, so part of that column is
 transcription rather than physics.
+
+Winding AC resistance is exact for skin effect and for proximity in a uniform
+transverse field, but the uniform-field formulation omits the neighbouring turns'
+eddy-current reaction. That is immaterial while the wire-diameter-to-pitch ratio
+d/s ≤ 0.2 (within 1 % of Medhurst's Φ) but grows to +16 % at d/s = 0.5 and +74 %
+at d/s = 1. Butterworth quantifies exactly this: he gives 5.94 for a close-wound
+infinite solenoid ignoring the eddy field against 3.41 with it, and the model
+here returns 1 + π²/2 = 5.93. The model also carries no l/D dependence, over
+which Medhurst's Φ spans 23 % at d/s = 0.8. Close-wound secondaries therefore get
+their R over-predicted, so Q is a lower bound. The fix is to interpolate
+Medhurst's measured Φ above d/s = 0.3 rather than to extend the theory: his
+d/s ≤ 0.3 and l/D ≥ 8 cells are themselves computed from Butterworth, so
+validating a corrected model there would be circular.
 
 Mode 1 converges to 0.1 % by 200 sections. Higher modes converge more slowly —
 the 4th is still 6 % short of the uniform-line 1:3:5:7 ratio at 400 sections —
@@ -215,6 +228,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Lumped 4th-order DRSSTC transient | ngspice via PySpice; de Queiroz mode ratios 1:2:3, 1:3:5 [5] | numerical |
 | Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |
 | Spark length vs power | Freau law (SGTC) [16]; published DRSSTC/QCW data [13], [14] | within data spread |
+| Winding AC resistance | Butterworth's Tables I and II [27]; Medhurst Φ [9] | 5e-4 on Butterworth; 1 % for d/s ≤ 0.2, see §3.1a |
+| Unloaded secondary Q | Denicolai measured 326 at 65.6 kHz [1]; Kaizer tabulations [14] | within the published band |
 | IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
@@ -236,7 +251,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 0. Repo scaffold, CI, Docker, schema, backend switch.
 1. EM matrices, eigen-solve, validation against acmi/Wheeler/Medhurst.
 1a. Dielectric former in the MoM, and validation against air-cored measured
-   coils (tssp, Denicolai), to close the Medhurst residual below.
+   coils (tssp, Denicolai), to close the Medhurst f_res residual; Medhurst Φ
+   interpolation for close-wound AC resistance. Both are documented in §3.1a.
 2. Circuit + driver + exponential integrator, SSTC and DRSSTC, SPICE parity.
 3. Streamer load and length dynamics, breakout, spark-length calibration.
 4. Thermal and loss models, QCW modulation, MIDI interrupter.
@@ -270,7 +286,7 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 8. T. Fritz, streamer load model (220 kΩ + ~1 pF/ft), Tesla Coil Mailing List, 2002–2005. https://www.pupman.com/listarchives/2005/Feb/msg00064.html
 9. R. G. Medhurst, "H.F. Resistance and Self-Capacitance of Single-Layer Solenoids," *Wireless Engineer*, Feb./Mar. 1947.
 10. D. W. Knight, "The self-resonance and self-capacitance of solenoid coils" and "An introduction to the art of solenoid inductance calculation." https://hamwaves.com/inductance/doc/knight.p1.pdf
-11. E. Fraga, C. Prados, D.-X. Chen, "Practical Model and Calculation of AC Resistance of Long Solenoids," *IEEE Trans. Magn.* 34(1), 1998.
+11. E. Fraga, C. Prados, D.-X. Chen, "Practical Model and Calculation of AC Resistance of Long Solenoids," *IEEE Trans. Magn.* 34(1), 205–212, 1998. An equivalent-tube model, not a skin/proximity split; not obtainable open access, so [27] is implemented instead.
 12. S. Ward, "A General Guide to DRSSTC Design"; Universal Driver UD2.x. https://www.stevehv.4hv.org/drsstc_design.htm , https://github.com/WaskaLabs/Universal_Driver_29_X
 13. Loneoceans Laboratories, UD2.7C driver and ramped/QCW SSTC notes. https://loneoceans.com/labs/sales/ud27/index.htm , https://www.loneoceans.com/labs/sstc3/
 14. Kaizer Power Electronics, DRSSTC design guide and phase-lead test notes. https://kaizerpowerelectronics.dk/tesla-coils/drsstc-design-guide/
@@ -286,3 +302,4 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 24. "Simulation and Analysis of the Optimal Electric Field from Modifications to the Winding Design for the Tesla Transformer," *Energies* 18(2), 339, 2025 (FEM of secondary field). https://www.mdpi.com/1996-1073/18/2/339
 25. openEMS. https://www.openems.de/ ; CuPy. https://docs.cupy.dev/ ; Numba CUDA. https://numba.readthedocs.io/ ; NVIDIA Warp. https://developer.nvidia.com/warp-python
 26. JavaTC. http://www.classictesla.com/java/javatc.html ; TeslaMap. https://www.teslamap.com/
+27. S. Butterworth, "Effective Resistance of Inductance Coils at Radio Frequency," *Experimental Wireless & The Wireless Engineer*, Apr./May 1926 (eq. 21, Tables I, II and IV). https://www.g6yb.com/g3ynh/zdocs/refs/

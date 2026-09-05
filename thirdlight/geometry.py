@@ -67,16 +67,17 @@ class Solenoid:
         """Developed conductor length."""
         return self.turns * np.hypot(2.0 * np.pi * self.radius, self.pitch)
 
-    def discretise(self, sections):
-        """Split into ``sections`` equal-length ring sections of equal turn count."""
-        w = self.length / sections
-        z = self.base + w * (np.arange(sections) + 0.5)
+    def discretise(self, sections=None):
+        """Equal-length, equal-turn ring sections; one ring per turn if ``sections`` is None."""
+        count = int(np.ceil(self.turns)) if sections is None else sections
+        w = self.length / count
+        z = self.base + w * (np.arange(count) + 0.5)
         return Rings(
-            a=np.full(sections, self.radius),
+            a=np.full(count, self.radius),
             z=z,
-            n=np.full(sections, self.turns / sections),
-            w=np.full(sections, w),
-            rw=np.full(sections, 0.5 * self.wire_diameter),
+            n=np.full(count, self.turns / count),
+            w=np.full(count, w),
+            rw=np.full(count, 0.5 * self.wire_diameter),
         )
 
 

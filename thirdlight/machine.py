@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import yaml
 
 from thirdlight import secondary
-from thirdlight.circuit import Bridge, Network, Switch, Tank, from_modes, tune
+from thirdlight.circuit import Bridge, Bus, Network, Switch, Tank, from_modes, tune
 from thirdlight.control import Driver, Interrupter, Melody, PhaseLead, Ramp
 from thirdlight.em import inductance, losses
 from thirdlight.geometry import Design
@@ -57,6 +57,7 @@ class Machine:
     design: Design
     tank: Tank
     bridge: Bridge
+    bus: Bus
     driver: Driver
     network: Network
 
@@ -82,6 +83,7 @@ class Machine:
         spec = dict(spec)
         modes = spec.pop("modes", 2)
         tank = dict(spec.pop("tank"))
+        bus = Bus(**spec.pop("bus", {}))
         bridge = _bridge(spec.pop("bridge"))
         driver = spec.pop("driver", {})
         design = Design.from_dict(spec)
@@ -95,6 +97,7 @@ class Machine:
             design=design,
             tank=tank,
             bridge=bridge,
+            bus=bus,
             driver=_driver(driver, eigen.f[0]),
             network=from_modes(
                 eigen,
@@ -103,6 +106,7 @@ class Machine:
                 primary,
                 tank,
                 bridge,
+                bus,
             ),
         )
 

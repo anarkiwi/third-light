@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import brentq
 
-from thirdlight.circuit import Network
+from thirdlight.circuit import OPEN, Network
 from thirdlight.solver.propagator import Propagator
 
 _XTOL = 1e-14
@@ -24,8 +24,8 @@ class Result:
     t: np.ndarray
     x: np.ndarray
     gate: np.ndarray
-    device: np.ndarray
-    drive: np.ndarray
+    state: np.ndarray
+    u: np.ndarray
     network: Network
 
     def __len__(self):
@@ -35,6 +35,17 @@ class Result:
     def primary_current(self):
         """Primary tank current, A."""
         return self.network.primary_current(self.x)
+
+    @property
+    def bus_voltage(self):
+        """DC bus voltage, the reservoir state or the supply that stood in for it, V."""
+        return self.network.bus_voltage(self.x, self.u[:, 2])
+
+    @property
+    def drive(self):
+        """Bridge output across the tank, less its differential resistance, V."""
+        polarity = np.where(self.state < OPEN * 2, 1.0 - 2.0 * (self.state % 2), 0.0)
+        return polarity * self.network.bridge.gain * self.bus_voltage + self.u[:, 0]
 
     @property
     def tank_voltage(self):
@@ -71,18 +82,17 @@ def _crossing(prop, ends, u, functional, span, sign):
     return brentq(lambda s: c @ prop.advance(x, u, s) + d, 0.0, span, xtol=span * _XTOL)
 
 
-def _breakout(network, gate, x, u_load, v_bus):
+def _breakout(network, gate, x, u):
     """Polarity a blocked bridge starts to conduct with, or 0 while it stays blocked.
 
     Each candidate sign fixes which devices conduct and hence the loop equation;
     the sign is admissible when the resulting di_p/dt agrees with it. Neither
-    agreeing is the diode dead zone, where the loop voltage cannot forward bias
-    anything.
+    agreeing is the diode dead zone, where the loop voltage forward biases nothing.
     """
     for sign in (1.0, -1.0):
-        index = network.state(gate, sign)[0]
-        u = np.array([network.drive(gate, sign, v_bus), u_load])
-        if (network.a[index] @ x + network.b @ u)[0] * sign > 0.0:
+        row = network.index(gate, sign)
+        u[0] = network.offset(gate, sign)
+        if (network.a[row] @ x + network.b[row] @ u)[0] * sign > 0.0:
             return sign
     return 0.0
 
@@ -105,6 +115,15 @@ def _burst_schedule(driver, duration):
     return times, driver.interrupter.active(np.nextafter(times, math.inf))
 
 
+def _horizon(seq, t, step, duration, schedule, edge):
+    """Span the interval may run for: to the step, the run, a gate or a burst edge."""
+    limit = min(t + step, duration, seq.next_time())
+    edge_t = schedule[0]
+    if edge < edge_t.size:
+        limit = min(limit, edge_t[edge])
+    return min(limit - t, step)
+
+
 def simulate(network, driver, duration, step, load=None, x0=None):
     """Run ``network`` under ``driver`` for ``duration`` seconds at nominal ``step``.
 
@@ -112,11 +131,10 @@ def simulate(network, driver, duration, step, load=None, x0=None):
     held over the interval; its RC time constant is far above the step, so the
     explicit coupling is stable.
     """
-    props = [Propagator.build(a, network.b, step) for a in network.a]
-    unit = np.zeros(network.size)
-    unit[0] = 1.0
+    props = [Propagator.build(a, b, step) for a, b in zip(network.a, network.b)]
+    unit = np.eye(network.size)[0]
     seq = driver.sequencer()
-    schedule = edge_t, _ = _burst_schedule(driver, duration)
+    schedule = _burst_schedule(driver, duration)
     if driver.interrupter is not None:
         seq.burst(0.0, bool(driver.interrupter.active(0.0)))
     sign_i, sign_fb, edge = 0.0, 0.0, 0
@@ -126,24 +144,21 @@ def simulate(network, driver, duration, step, load=None, x0=None):
     while True:
         edge = _synchronise(seq, t, edge, schedule)
         gate = seq.gate
-        v_bus = seq.bus_voltage(t)
         current = 0.0 if load is None else load(t, float(network.top_voltage(x)))
+        u = np.array([0.0, current, seq.bus_voltage(t)])
         if sign_i == 0.0:
-            sign_i = _breakout(network, gate, x, current, v_bus)
-        device = network.state(gate, sign_i)[0]
-        prop = props[device]
-        u = np.array([network.drive(gate, sign_i, v_bus), current])
-        history.append((t, x, gate, device, u[0]))
+            sign_i = _breakout(network, gate, x, u)
+        row = network.index(gate, sign_i)
+        prop = props[row]
+        u[0] = network.offset(gate, sign_i)
+        history.append((t, x, gate, row, u.copy()))
         if t >= duration:
             break
-        horizon = min(t + step, duration, seq.next_time())
-        if edge < edge_t.size:
-            horizon = min(horizon, edge_t[edge])
-        span = min(horizon - t, step)
+        span = _horizon(seq, t, step, duration, schedule, edge)
         if span <= 0.0:
             t = np.nextafter(t, math.inf)
             continue
-        lead = driver.lead.functional(network.a[device], network.b, u)
+        lead = driver.lead.functional(network.a[row], network.b[row], u)
         ends = x, prop.advance(x, u, span)
         hit_i = math.inf
         if sign_i != 0.0:
@@ -165,12 +180,12 @@ def simulate(network, driver, duration, step, load=None, x0=None):
             x[0] = 0.0
         elif sign_fb == 0.0:
             sign_fb = np.sign(lead[0] @ x + lead[1])
-    times, states, gates, devices, drives = zip(*history)
+    times, states, gates, rows, inputs = zip(*history)
     return Result(
         t=np.array(times),
         x=np.array(states),
         gate=np.array(gates, dtype=np.int8),
-        device=np.array(devices, dtype=np.int8),
-        drive=np.array(drives),
+        state=np.array(rows, dtype=np.int8),
+        u=np.array(inputs),
         network=network,
     )

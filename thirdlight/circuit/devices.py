@@ -47,9 +47,9 @@ class Bridge:
         """Output swing per unit bus voltage: 1 for a full bridge, 1/2 for a half."""
         return 1.0 if self.full else 0.5
 
-    def conducting(self, index):
+    def conducting(self, kind):
         """The :class:`Switch` conducting in state ``IGBT`` or ``DIODE``, None when open."""
-        return (self.igbt, self.diode, None)[index]
+        return (self.igbt, self.diode, None)[kind]
 
     def state(self, gate, current):
         """Conduction state ``(kind, polarity sigma, current sign)`` of the bridge.

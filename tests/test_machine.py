@@ -101,3 +101,21 @@ def test_the_example_drsstc_locks_to_the_lower_coupled_split():
     )
     assert np.abs(result.top_voltage).max() > 1e5
     assert np.abs(current).max() > 1e2
+
+
+def test_a_bus_reservoir_loads_from_the_schema_and_sags():
+    """A finite bus becomes the last state and droops as the bridge draws on it."""
+    machine = small(bus={"capacitance": 2e-5, "resistance": 1.0}, driver=SPEC["driver"])
+    assert machine.bus.reservoir
+    assert machine.network.size == 2 * (machine.network.modes + 1) + 1
+    result = machine.run(20.0 / machine.frequency)
+    assert result.bus_voltage[-1] < machine.driver.bus
+    assert result.bus_voltage[-1] > 0.0
+
+
+def test_a_stiff_bus_is_the_default():
+    """Without a bus section the supply voltage is held, and reported as the bus."""
+    machine = small()
+    assert not machine.bus.reservoir
+    result = machine.run(5.0 / machine.frequency)
+    assert np.all(result.bus_voltage == machine.driver.bus)

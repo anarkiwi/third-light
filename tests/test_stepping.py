@@ -6,12 +6,15 @@ import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
 
-from thirdlight.circuit import IGBT, OPEN, Bridge, Switch, Tank, from_modes, tune
+from thirdlight.circuit import IGBT, OPEN, Bridge, Bus, Switch, Tank, from_modes, tune
+from thirdlight.circuit.devices import index as state_index
 from thirdlight.control import Driver, Interrupter, PhaseLead, Ramp
 from thirdlight.secondary import Modes
 from thirdlight.solver import simulate
 
 V_BUS = 340.0
+IGBT_STATES = (state_index(IGBT, 1.0), state_index(IGBT, -1.0))
+BLOCKED = state_index(OPEN, 0.0)
 IDEAL = Bridge(igbt=Switch(0.0, 0.0), diode=Switch(0.0, 0.0))
 REAL = Bridge(igbt=Switch(1.2, 0.012), diode=Switch(1.0, 0.010))
 
@@ -26,9 +29,13 @@ def modal(frequencies, inductances):
     )
 
 
-def network(quality=(400.0,), k=(0.2,), l_p=1e-4, f=(1e5,), l_m=(6e-2,), bridge=REAL):
+def network(
+    quality=(400.0,), k=(0.2,), l_p=1e-4, f=(1e5,), l_m=(6e-2,), bridge=REAL, bus=Bus()
+):
     """One- or two-mode network with the tank tuned to the first mode."""
-    return from_modes(modal(f, l_m), k, quality, l_p, Tank(tune(l_p, f[0])), bridge)
+    return from_modes(
+        modal(f, l_m), k, quality, l_p, Tank(tune(l_p, f[0])), bridge, bus
+    )
 
 
 def driver(lead=0.0, delay=0.0, dead_time=0.0, bus=V_BUS, **kwargs):
@@ -39,9 +46,12 @@ def driver(lead=0.0, delay=0.0, dead_time=0.0, bus=V_BUS, **kwargs):
 
 
 def period(net):
-    """Period of the lower coupled split, the pole a ZCS driver locks to."""
-    values = np.linalg.eigvals(net.a[0])
-    return 2.0 * math.pi / np.abs(values.imag).min()
+    """Period of the lower coupled split, the pole a ZCS driver locks to.
+
+    A bus reservoir adds a real pole, which carries no oscillation to lock to.
+    """
+    imaginary = np.abs(np.linalg.eigvals(net.a[0]).imag)
+    return 2.0 * math.pi / imaginary[imaginary > 0.0].min()
 
 
 def transitions(result, value=None):
@@ -81,8 +91,8 @@ def test_every_interval_matches_an_independent_stiff_solver():
         span = result.t[i + 1] - result.t[i]
         if span == 0.0:
             continue
-        a, b = net.a[result.device[i]], net.b
-        u = np.array([result.drive[i], 0.0])
+        a, b = net.a[result.state[i]], net.b[result.state[i]]
+        u = result.u[i]
         exact = solve_ivp(
             lambda _, x, a=a, b=b, u=u: a @ x + b @ u,
             (0.0, span),
@@ -157,7 +167,7 @@ def test_the_bridge_blocks_once_the_current_reaches_zero_off_a_burst():
     result = simulate(net, driver(interrupter=gating), 99e-6, period(net) / 256.0)
     off = result.t > 20e-6
     assert np.all(result.gate[off] == 0)
-    blocked = off & (result.device == OPEN)
+    blocked = off & (result.state == BLOCKED)
     assert blocked.sum() > 0.5 * off.sum()
     assert np.abs(result.primary_current[blocked]).max() == 0.0
     run = np.flatnonzero(blocked)
@@ -193,7 +203,7 @@ def test_a_ramped_bus_ramps_the_primary_current():
         40e-6,
         period(net) / 256.0,
     )
-    conducting = np.abs(ramped.drive[ramped.device == IGBT])
+    conducting = np.abs(ramped.drive[np.isin(ramped.state, IGBT_STATES)])
     assert conducting.max() <= V_BUS
     assert conducting[0] < 0.2 * conducting[-1]
     envelope = np.maximum.accumulate(np.abs(ramped.primary_current))
@@ -229,3 +239,48 @@ def test_an_initial_state_is_not_written_through():
     result = simulate(net, driver(bus=0.0), 1e-6, period(net) / 256.0, x0=x0)
     assert result.x[0] == pytest.approx(x0)
     assert x0[net.modes + 1] == 10.0
+
+
+def test_a_bus_reservoir_conserves_energy_with_the_circuit():
+    """Bridge power is v_bus times the drawn current, so the two stores trade exactly.
+
+    The supply path is made inert by a huge series resistance, leaving the bus
+    capacitor as the only source; nothing else in the network dissipates.
+    """
+    bus = Bus(capacitance=1e-5, resistance=1e12)
+    net = network(quality=(np.inf,), bridge=IDEAL, bus=bus)
+    x0 = np.zeros(net.size)
+    x0[-1] = V_BUS
+    result = simulate(net, driver(bus=0.0), 100e-6, period(net) / 256.0, x0=x0)
+    total = result.energy + 0.5 * bus.capacitance * result.bus_voltage**2
+    assert np.abs(total / total[0] - 1.0).max() < 1e-9
+    assert result.bus_voltage.min() < 0.9 * V_BUS
+
+
+def test_the_bus_sags_through_a_burst_and_recovers_between_them():
+    """A finite reservoir droops while the bridge draws and charges back on the supply."""
+    bus = Bus(capacitance=2e-5, resistance=1.0)
+    net = network(bus=bus)
+    gating = Interrupter(on_time=20e-6, frequency=1e4)
+    result = simulate(
+        net, driver(interrupter=gating), 99e-6, period(net) / 256.0, x0=None
+    )
+    voltage = result.bus_voltage
+    assert voltage[0] == 0.0
+    burst = (result.t > 1e-6) & (result.t < 20e-6)
+    assert voltage[burst].max() < V_BUS
+    assert voltage[-1] > voltage[burst].max()
+
+
+def test_a_stiff_bus_is_the_limit_of_a_large_reservoir():
+    """A reservoir far larger than the charge a burst moves runs like a stiff supply."""
+    step = period(network()) / 256.0
+    stiff = simulate(network(), driver(), 20e-6, step)
+    net = network(bus=Bus(capacitance=1.0, resistance=1e-6))
+    x0 = np.zeros(net.size)
+    x0[-1] = V_BUS
+    large = simulate(net, driver(), 20e-6, step, x0=x0)
+    assert large.primary_current[-1] == pytest.approx(
+        stiff.primary_current[-1], rel=1e-4
+    )
+    assert large.bus_voltage[-1] == pytest.approx(V_BUS, rel=1e-5)

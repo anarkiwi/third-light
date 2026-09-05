@@ -124,9 +124,24 @@ which sets the section count needed for the M = 4..16 modal reduction of §3.3.
 
 ### 3.2 Time domain: piecewise-LTI exponential integrator
 
-State x = [i_p, v_Cp, v_bus, modal q_m, q̇_m, i_lead, thermal states...].
-Each bridge configuration σ ∈ {+V, −V, freewheel, open} and each diode
-conduction state gives a constant (A_σ, B_σ). Instead of tabulating propagators
+State x = [i_p, i_1..i_M, v_Cp, v_1..v_M], with v_bus last when the bus is a
+reservoir rather than stiff, and thermal states to come in phase 4. Input
+u = [drop, i_load, v_supply]. The modal equivalents l_m, c_m are referred to the
+top node, so the modes are C-orthogonal and L is an arrowhead matrix — primary
+self, modal self, and the mutuals k_m √(L_p l_m) — while a load current at the
+top node forces every mode identically:
+
+    L di/dt = e_p (σ g v_bus + drop) − R_σ i − v
+    dv_Cp/dt = i_p / C_p,   dv_m/dt = (i_m − i_load) / c_m
+    C_bus dv_bus/dt = (v_supply − v_bus) / R_s − σ g i_p
+
+with g the bridge's swing per unit bus voltage, 1 full and 1/2 half. A stiff bus
+drops the last row and carries σ g v_supply as an input column instead. Each
+bridge configuration σ ∈ {+V, −V, freewheel, open} and each diode
+conduction state gives a constant (A_σ, B_σ); the conducting device's
+differential resistance sits in R_σ and its constant drop in u, and σ appears in
+both A and B, so the stack is five: an IGBT or a diode conducting at either
+polarity, and the blocked bridge. Instead of tabulating propagators
 at a fixed step and its binary subdivisions, each A_σ is diagonalised once per
 design:
 
@@ -286,6 +301,7 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
+| Bus reservoir | first-order charging against its own R_s C_bus; energy traded with the circuit exactly | 1e-8, 1e-9 |
 
 ## 6. Engineering constraints
 

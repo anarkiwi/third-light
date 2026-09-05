@@ -43,6 +43,8 @@ are resolved against the first secondary mode at load time.
 | `tank.tune` | in place of `capacitance`: primary resonance as a multiple of mode 1 |
 | `tank.resistance` | primary loop resistance including tank ESR, ohm |
 | `tank.inductance` | override the primary inductance taken from the geometry |
+| `bus.capacitance` | DC bus reservoir, F; omit for a stiff bus held at the driver's voltage |
+| `bus.resistance` | rectifier and mains series resistance, ohm; positive with a reservoir |
 | `bridge.igbt.v0`, `bridge.igbt.r` | IGBT knee voltage and slope resistance |
 | `bridge.diode.v0`, `bridge.diode.r` | anti-parallel diode, same form |
 | `bridge.full` | true for a full bridge, false for a half bridge |

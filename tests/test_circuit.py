@@ -11,6 +11,7 @@ from thirdlight.circuit import (
     DIODE,
     IGBT,
     OPEN,
+    Bus,
     Bridge,
     Switch,
     Tank,
@@ -20,11 +21,16 @@ from thirdlight.circuit import (
 )
 from thirdlight.em import inductance, losses
 from thirdlight.geometry import Design, Primary, Solenoid, Toroid
+from thirdlight.circuit.devices import index as state_index
 from thirdlight.secondary import Modes, coupling, resonance
 
 IDEAL = Bridge(igbt=Switch(0.0, 0.0), diode=Switch(0.0, 0.0))
 REAL = Bridge(igbt=Switch(1.6, 0.02), diode=Switch(1.1, 0.015))
 V_BUS = 400.0
+IGBT_FORWARD = state_index(IGBT, 1.0)
+IGBT_REVERSE = state_index(IGBT, -1.0)
+DIODE_FORWARD = state_index(DIODE, 1.0)
+BLOCKED = state_index(OPEN, 0.0)
 
 # Normalised units: L_p = C_p = 1 puts w_0 at 1 rad/s and every state at O(1), so
 # one absolute tolerance serves the whole vector.
@@ -69,7 +75,7 @@ def free_response(net, span, points=4001):
     start = np.zeros(net.size)
     start[net.modes + 1] = 1.0
     sol = solve_ivp(
-        lambda t, x: net.a[IGBT] @ x,
+        lambda t, x: net.a[IGBT_FORWARD] @ x,
         (0.0, span),
         start,
         method="DOP853",
@@ -102,7 +108,7 @@ def eigen_quality(values):
     return values.imag / (-2.0 * values.real)
 
 
-def energy_quality(net, values, vectors, index=IGBT):
+def energy_quality(net, values, vectors, index=IGBT_FORWARD):
     """Q = w W / P from each eigenvector's stored energy and its dissipation."""
     loops = net.modes + 1
     current, voltage = vectors[:loops], vectors[loops:]
@@ -131,7 +137,7 @@ def test_tune_inverts_the_resonance_formula():
 def test_lossless_split_frequencies(k, l_m):
     """A tuned pair splits to f_0 / sqrt(1 -+ k), whatever the turns ratio."""
     net = tuned(k, l_m=l_m)
-    values, _ = oscillatory(net.a[IGBT])
+    values, _ = oscillatory(net.a[IGBT_FORWARD])
     assert np.abs(values.real).max() < 1e-12 * np.abs(values.imag).max()
     assert values.imag / (2.0 * math.pi) == pytest.approx(
         np.sort([UNIT_F / math.sqrt(1.0 + k), UNIT_F / math.sqrt(1.0 - k)]), rel=1e-10
@@ -216,11 +222,14 @@ def test_top_load_current_forces_every_mode_and_spares_the_tank():
     )
     assert net.modes == 2
     assert net.size == 6
-    assert np.array_equal(net.b[:3, 1], np.zeros(3))
-    assert net.b[3, 1] == 0.0
-    assert net.b[4:, 1] == pytest.approx(-1.0 / net.capacitances[1:])
-    assert net.b[:3, 0] == pytest.approx(np.linalg.inv(net.inductances)[:, 0])
-    assert np.array_equal(net.b[3:, 0], np.zeros(3))
+    b = net.b[IGBT_FORWARD]
+    assert np.array_equal(b[:3, 1], np.zeros(3))
+    assert b[3, 1] == 0.0
+    assert b[4:, 1] == pytest.approx(-1.0 / net.capacitances[1:])
+    assert b[:3, 0] == pytest.approx(np.linalg.inv(net.inductances)[:, 0])
+    assert np.array_equal(b[3:, 0], np.zeros(3))
+    assert b[:3, 2] == pytest.approx(np.linalg.inv(net.inductances)[:, 0])
+    assert np.array_equal(net.b[IGBT_REVERSE][:3, 2], -b[:3, 2])
     assert net.top_voltage(np.arange(6.0)) == 4.0 + 5.0
 
 
@@ -240,8 +249,12 @@ def test_inductance_matrix_is_arrowhead_and_the_tank_overrides_geometry():
     )
     assert net.inductances == pytest.approx(net.inductances.T)
     modal_r = 2.0 * math.pi * net.frequencies * np.array([1e-4, 1e-5]) / [300.0, 400.0]
-    assert net.resistances[IGBT] == pytest.approx(np.concatenate(([0.54], modal_r)))
-    assert net.resistances[DIODE] == pytest.approx(np.concatenate(([0.53], modal_r)))
+    assert net.resistances[IGBT_FORWARD] == pytest.approx(
+        np.concatenate(([0.54], modal_r))
+    )
+    assert net.resistances[DIODE_FORWARD] == pytest.approx(
+        np.concatenate(([0.53], modal_r))
+    )
 
 
 @pytest.mark.parametrize("gate", [-1, 0, 1])
@@ -249,17 +262,18 @@ def test_inductance_matrix_is_arrowhead_and_the_tank_overrides_geometry():
 def test_bridge_conduction_states_and_drive(gate, current):
     """IGBTs conduct with the command, diodes against it, and gate 0 freewheels."""
     net = tuned(0.2, bridge=REAL)
-    index, sigma, sign = net.state(gate, current)
+    kind, sigma, sign = net.state(gate, current)
     s = math.copysign(1.0, current)
     assert sign == s
     if gate == 0:
-        assert (index, sigma) == (DIODE, -s)
+        assert (kind, sigma) == (DIODE, -s)
     else:
         assert sigma == float(gate)
-        assert index == (IGBT if s == gate else DIODE)
+        assert kind == (IGBT if s == gate else DIODE)
+    assert net.index(gate, current) == state_index(kind, sigma)
     ideal = sigma * V_BUS
     drive = net.drive(gate, current, V_BUS)
-    assert drive == pytest.approx(ideal - 2.0 * REAL.conducting(index).v0 * s)
+    assert drive == pytest.approx(ideal - 2.0 * REAL.conducting(kind).v0 * s)
     assert (drive - ideal) * s < 0.0
     assert (gate != 0) or drive * s < 0.0
 
@@ -269,8 +283,9 @@ def test_a_bridge_at_zero_current_is_open_and_carries_no_drive():
     net = tuned(0.2, bridge=REAL)
     for gate in (-1, 0, 1):
         assert net.state(gate, 0.0) == (OPEN, 0.0, 0.0)
+        assert net.index(gate, 0.0) == BLOCKED
         assert net.drive(gate, 0.0, V_BUS) == 0.0
-    assert np.all(net.a[OPEN][0] == 0.0)
+    assert np.all(net.a[BLOCKED][0] == 0.0)
     assert REAL.conducting(OPEN) is None
 
 
@@ -278,15 +293,15 @@ def test_the_open_bridge_freezes_the_tank_and_uncouples_the_modes():
     """i_p and v_Cp are held while each mode rings down on its own l_m, c_m and r_m."""
     net = tuned(0.2, bridge=REAL)
     loops = net.modes + 1
-    assert np.all(net.a[OPEN][loops] == 0.0)
-    block = net.a[OPEN][1:loops, 1:loops]
+    assert np.all(net.a[BLOCKED][loops] == 0.0)
+    block = net.a[BLOCKED][1:loops, 1:loops]
     assert block == pytest.approx(np.diag(np.diagonal(block)))
-    assert net.resistances[OPEN] == pytest.approx(
-        np.concatenate(([0.0], net.resistances[IGBT][1:]))
+    assert net.resistances[BLOCKED] == pytest.approx(
+        np.concatenate(([0.0], net.resistances[IGBT_FORWARD][1:]))
     )
     x = np.zeros(net.size)
     x[loops:] = 1.0
-    assert (net.a[OPEN] @ x)[0] == 0.0
+    assert (net.a[BLOCKED] @ x)[0] == 0.0
 
 
 def test_half_bridge_halves_the_swing_and_drops_one_device():
@@ -304,8 +319,10 @@ def test_half_bridge_halves_the_swing_and_drops_one_device():
         assert full_net.drive(gate, current, V_BUS) == pytest.approx(
             sigma * V_BUS - 2.0 * device.v0 * sign
         )
-    assert half_net.resistances[IGBT][0] == pytest.approx(0.1 + REAL.igbt.r)
-    assert full_net.resistances[IGBT][0] == pytest.approx(0.1 + 2.0 * REAL.igbt.r)
+    assert half_net.resistances[IGBT_FORWARD][0] == pytest.approx(0.1 + REAL.igbt.r)
+    assert full_net.resistances[IGBT_FORWARD][0] == pytest.approx(
+        0.1 + 2.0 * REAL.igbt.r
+    )
 
 
 def test_decoupled_branches_ring_down_at_their_own_quality_factor():
@@ -341,8 +358,9 @@ def test_from_design_state_space_tracks_the_coupled_split_and_the_modal_q():
     quality = losses.quality_factor(SMALL, eigen)
     l_p = float(inductance.inductance_matrix(SMALL.primary_rings()).sum())
     net = from_design(SMALL, Tank(tune(l_p, eigen.f[0])), REAL, modes=2)
-    assert net.a.shape == (3, 6, 6)
-    assert net.b.shape == (6, 2)
+    assert net.a.shape == (5, 6, 6)
+    assert net.b.shape == (5, 6, 3)
+    assert net.b.shape == (5, 6, 3)
     assert np.isfinite(net.a).all() and np.isfinite(net.b).all()
     assert net.inductances[0, 0] == pytest.approx(l_p, rel=1e-12)
     assert net.frequencies == pytest.approx(eigen.f, rel=1e-12)
@@ -357,3 +375,65 @@ def test_from_design_state_space_tracks_the_coupled_split_and_the_modal_q():
     assert damping == pytest.approx(energy_quality(net, values, vectors), rel=1e-6)
     assert damping[2] == pytest.approx(quality[1], rel=0.03)
     assert damping[0] == pytest.approx(2.0 * quality[0], rel=0.05)
+
+
+def test_a_bus_reservoir_needs_a_supply_resistance():
+    """Without one the supply is stiff and the reservoir would be shorted out."""
+    with pytest.raises(ValueError):
+        Bus(capacitance=1e-3)
+    assert not Bus().reservoir
+    assert Bus(capacitance=1e-3, resistance=0.5).reservoir
+
+
+def test_a_bus_reservoir_borders_the_state_space():
+    """v_bus becomes the last state, charged by the supply and drawn on by the bridge."""
+    bus = Bus(capacitance=2e-3, resistance=0.5)
+    net = from_modes(modal([1e5], [1e-4]), [0.2], [300.0], 1e-4, Tank(1e-7), IDEAL, bus)
+    rate = 1.0 / (bus.resistance * bus.capacitance)
+    assert net.size == 5
+    assert net.a.shape == (5, 5, 5)
+    for row, sigma in ((IGBT_FORWARD, 1.0), (IGBT_REVERSE, -1.0)):
+        assert net.a[row][-1, -1] == pytest.approx(-rate)
+        assert net.a[row][-1, 0] == pytest.approx(-sigma / bus.capacitance)
+        assert net.a[row][:2, -1] == pytest.approx(
+            sigma * np.linalg.inv(net.inductances)[:, 0]
+        )
+        assert net.b[row][-1, 2] == pytest.approx(rate)
+        assert np.array_equal(net.b[row][:, :2], net.b[BLOCKED][:, :2])
+    assert np.all(net.a[BLOCKED][:, -1][:-1] == 0.0)
+    assert net.a[BLOCKED][-1, 0] == 0.0
+
+
+def test_the_reservoir_charges_at_its_own_time_constant():
+    """With the bridge blocked the bus is a first-order lag on the supply."""
+    bus = Bus(capacitance=2e-3, resistance=0.5)
+    net = from_modes(modal([1e5], [1e-4]), [0.2], [300.0], 1e-4, Tank(1e-7), IDEAL, bus)
+    tau = bus.resistance * bus.capacitance
+    x0 = np.zeros(net.size)
+    u = np.array([0.0, 0.0, V_BUS])
+    solution = solve_ivp(
+        lambda t, x: net.a[BLOCKED] @ x + net.b[BLOCKED] @ u,
+        (0.0, 3.0 * tau),
+        x0,
+        method="DOP853",
+        rtol=1e-12,
+        t_eval=[tau, 3.0 * tau],
+    ).y[-1]
+    assert solution == pytest.approx(V_BUS * (1.0 - np.exp([-1.0, -3.0])), rel=1e-8)
+
+
+def test_the_bus_voltage_reads_the_state_or_the_supply():
+    """A stiff bus reports the supply it was given; a reservoir reports its own state."""
+    stiff = from_modes(modal([1e5], [1e-4]), [0.2], [300.0], 1e-4, Tank(1e-7), IDEAL)
+    reservoir = from_modes(
+        modal([1e5], [1e-4]),
+        [0.2],
+        [300.0],
+        1e-4,
+        Tank(1e-7),
+        IDEAL,
+        Bus(capacitance=2e-3, resistance=0.5),
+    )
+    assert stiff.bus_voltage(np.zeros(stiff.size), V_BUS) == V_BUS
+    x = np.arange(float(reservoir.size))
+    assert reservoir.bus_voltage(x, V_BUS) == x[-1]

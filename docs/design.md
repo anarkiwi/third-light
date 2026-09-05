@@ -53,8 +53,11 @@ detailed plasma chemistry.
 3. P matrix: ring-charge potential coefficients (elliptic integral K), image
    rings for the ground plane, optional grounded strike ring. C = P^-1 by
    Cholesky (P is SPD) in float64 via cuSOLVER (`cupy.linalg`), batched.
-   Section self-capacitance plus mutual capacitances reproduce Medhurst's
-   curve as a cross-check, not as an input.
+   Medhurst's C_L is *not* this matrix: it is the lumped equivalent of the
+   resonating coil, and at l/D = 1, D = 10 cm his 4.6 pF is below the 5.56 pF of
+   the inscribed sphere, so no static capacitance can equal it. The static
+   uniform-potential extraction is checked against the sphere and toroid instead;
+   Medhurst is a cross-check on f_res after step 5.
 4. R vector: per-section AC resistance at f_res from [11]; iterated once after
    the first eigen-solve because R depends on f.
 5. Eigen-solve of the ladder (generalised problem with L and C) →
@@ -137,9 +140,13 @@ Numba's CPU and CUDA targets do not share a namespace, so kernels are
 dispatched per backend and only the library-level linear algebra is
 namespace-generic.
 
-Precision: float64 for matrix assembly, inversion and eigen-solve (P is
-ill-conditioned for fine sections); float32 optional for stepping, gated by a
-conservation-of-energy check on a lossless test circuit.
+Precision: float64 for matrix assembly, inversion and eigen-solve; float32
+optional for stepping, gated by a conservation-of-energy check on a lossless test
+circuit. P conditioning is benign — cond(P) grows linearly at about 3.3 per ring,
+reaching only 1.4e3 at N = 400 — so Cholesky retains twelve digits. The real
+failure mode is geometric: P loses positive definiteness when rings overlap
+(conductor radius above the ring spacing), which surfaces as a Cholesky error
+rather than silent error.
 
 ### 3.4 Streamer length dynamics
 
@@ -184,8 +191,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 |---|---|---|
 | Single-ring and coaxial-loop inductance | closed form | 1e-10 rel |
 | Solenoid inductance | Wheeler, acmi published examples | 1 % |
-| Solenoid self-capacitance / f_res | Medhurst, tssp measured coils, Denicolai measurements [1] | 1–2 % |
-| Toroid capacitance | published isolated-toroid formula and FEM values | 3 % |
+| Isolated sphere and toroid capacitance | closed form; Kelvin image series for a sphere over a plane | 0.25/N, 1 % |
+| Solenoid f_res | Medhurst C_L via the eigen-solve, tssp measured coils, Denicolai measurements [1] | 1–2 % |
 | Coupling k | acmi | 1 % |
 | Lumped 4th-order DRSSTC transient | ngspice via PySpice; de Queiroz mode ratios 1:2:3, 1:3:5 [5] | numerical |
 | Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |

@@ -225,3 +225,24 @@ def test_sub_step_resolution(levels):
     phi_ref, gamma_ref = augmented(a, b, resolved)
     assert relative(phi, phi_ref) < 1e-12
     assert relative(gamma, gamma_ref) < 1e-12
+
+
+@pytest.mark.parametrize("name", list(CASES))
+@pytest.mark.parametrize("cond_max", [1e8, 0.0])
+def test_a_zero_step_is_exact_not_reconstructed(name, cond_max):
+    """Phi(0) is the identity and Gamma(0) zero to the bit, on both paths.
+
+    The event locator brackets a functional against the value it started from and
+    a switching instant pins that value to zero, so a rounding-sized Phi(0) x - x
+    puts the bracket on the wrong side and commutes the bridge again at once.
+    """
+    a, b, step = CASES[name]
+    propagator = Propagator.build(a, b, step, cond_max=cond_max)
+    phi, gamma = propagator.at(0.0)
+    assert np.array_equal(phi, np.eye(len(a)))
+    assert not gamma.any()
+    x = RNG.normal(size=len(a))
+    u = RNG.normal(size=np.atleast_2d(np.asarray(b).T).shape[0])
+    moved = propagator.advance(x, u, 0.0)
+    assert np.array_equal(moved, x)
+    assert moved is not x

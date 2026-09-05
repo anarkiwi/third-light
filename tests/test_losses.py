@@ -7,7 +7,7 @@ import pytest
 from scipy.constants import mu_0
 from scipy.special import ber, bei, beip, berp, ive, jv
 
-from thirdlight.em import inductance, losses
+from thirdlight.em import inductance, losses, medhurst
 from thirdlight.em.losses import (
     ac_ratio,
     capacitor_esr,
@@ -38,12 +38,7 @@ DRSSTC = Design(
     top_load_sections=16,
 )
 Q_GRID = np.geomspace(0.01, 100.0, 1201)
-# Medhurst 1947 Table VIII: phi = R_hf(coil) / R_hf(the same length of straight wire at
-# the same frequency), by d/s (wire diameter over pitch) and coil length over diameter.
-# Scans at g6yb.com/g3ynh/zdocs/refs/Medhurst/ , part 2 p88; his high-frequency limit.
-MEDHURST_INFINITE = {0.1: 1.05, 0.2: 1.19, 0.3: 1.40, 0.5: 1.93, 0.8: 2.81, 1.0: 3.41}
-MEDHURST_TEN = {0.1: 1.04, 0.2: 1.17, 0.3: 1.35, 0.5: 1.83, 0.8: 2.65, 1.0: 3.23}
-MEDHURST_LENGTH_08 = (2.74, 2.83, 2.97, 3.10, 3.20, 3.17, 2.74, 2.60, 2.60, 2.62, 2.65)
+MEDHURST_FINITE = medhurst.LENGTH[1:-1]
 # Butterworth, Experimental Wireless and The Wireless Engineer, Apr 1926 p207 Table I:
 # z -> (1 + F, G) in R_ac = R(1 + F + u G (d/c)^2), z = pi d sqrt(2 f/rho) = this q.
 BUTTERWORTH = {
@@ -86,16 +81,17 @@ def scaled_bessel(q):
     return 0.5 * z * ive(0, z) / ive(1, z)
 
 
-def medhurst_phi(spacing, q=200.0, radius=0.05):
+def medhurst_phi(spacing, length_ratio, q=1e4, reaction=True):
     """The model in Medhurst's normalisation: R_ac over the asymptotic straight-wire R.
 
     His denominator is rho l/(pi d delta) = R_dc q/(2 sqrt2), and his table is the
     f -> infinity limit, so the model is evaluated deep in the asymptotic regime.
     """
     diameter = 1e-3
-    coil = Solenoid(radius, 1000.0 * diameter / spacing, 1000, diameter)
+    length = 1000.0 * diameter / spacing
+    coil = Solenoid(0.5 * length / length_ratio, length, 1000, diameter)
     frequency = 2.0 * q**2 * resistivity() / (math.pi * mu_0 * diameter**2)
-    return ac_ratio(coil, frequency) / (q / (2.0 * math.sqrt(2.0)))
+    return ac_ratio(coil, frequency, reaction=reaction) / (q / (2.0 * math.sqrt(2.0)))
 
 
 def relative(values, reference):
@@ -210,7 +206,8 @@ def test_proximity_vanishes_as_the_turns_spread_out():
     q = kelvin_argument(SECONDARY.wire_diameter, 3e5, resistivity())
     excess = np.array(
         [
-            ac_ratio(Solenoid(0.076, length, 1000, 4e-4), 3e5) - skin_ratio(q)
+            ac_ratio(Solenoid(0.076, length, 1000, 4e-4), 3e5, reaction=False)
+            - skin_ratio(q)
             for length in (0.5, 1.0, 2.0, 5.0, 20.0, 100.0)
         ]
     )
@@ -225,7 +222,8 @@ def test_proximity_grows_as_the_turns_are_packed_closer():
     pitch = np.array([4e-3, 2e-3, 1e-3, 5e-4])
     excess = np.array(
         [
-            ac_ratio(Solenoid(0.076, p * 1000, 1000, 4e-4), 3e5) - skin_ratio(q)
+            ac_ratio(Solenoid(0.076, p * 1000, 1000, 4e-4), 3e5, reaction=False)
+            - skin_ratio(q)
             for p in pitch
         ]
     )
@@ -317,22 +315,39 @@ def test_capacitor_esr_and_dielectric_conductance():
     ) == pytest.approx(1e-4, rel=1e-12)
 
 
-def test_medhurst_proximity_factor():
-    """Exact for sparse windings, over-predicting monotonically as the turns close up.
+def test_the_model_reproduces_medhursts_measured_table():
+    """R_ac over the straight-wire resistance matches Table VIII at every measured cell."""
+    error = np.array(
+        [
+            [
+                medhurst_phi(s, v) / medhurst.PHI[i, j + 1] - 1.0
+                for j, v in enumerate(MEDHURST_FINITE)
+            ]
+            for i, s in enumerate(medhurst.SPACING)
+        ]
+    )
+    assert np.abs(error).max() < 1e-3
 
-    Against Medhurst's l/D = infinity column the error is +0.3, +0.9, +3.3, +15.7, +47.7
-    and +73.6 % at d/s = 0.1, 0.2, 0.3, 0.5, 0.8, 1.0, and one-signed: a uniform external
-    field ignores the mutual screening of adjacent turns, which grows as they touch.
+
+def test_the_uniform_field_alone_is_one_signed_high_as_the_turns_close_up():
+    """Without the reaction the excess over Medhurst is +0.6, +16 and +74 % at d/s = 0.2, 0.5, 1.
+
+    Monotone and one-signed to within the table's printed rounding, which is 5e-3 on
+    the 1.05 at d/s = 0.1: a uniform external field carries no mutual screening
+    between turns, and the screening grows as they touch.
     """
-    spacing = np.array(sorted(MEDHURST_INFINITE))
-    error = np.array([medhurst_phi(s) / MEDHURST_INFINITE[s] - 1.0 for s in spacing])
-    assert np.all(error > 0.0)
+    spacing = np.array(medhurst.SPACING)
+    error = np.array(
+        [
+            medhurst_phi(s, 4.0, reaction=False) / medhurst.PHI[i, -1] - 1.0
+            for i, s in enumerate(spacing)
+        ]
+    )
+    assert error.min() > -0.005
     assert np.all(np.diff(error) > 0.0)
     assert error[spacing <= 0.2].max() < 0.01
-    assert error[spacing == 0.3][0] < 0.035
-    assert error[-1] == pytest.approx(0.736, abs=0.005)
-    against_ten = np.array([medhurst_phi(s) / MEDHURST_TEN[s] - 1.0 for s in spacing])
-    assert np.all(against_ten > error)
+    assert error[spacing == 0.5][0] == pytest.approx(0.157, abs=0.005)
+    assert error[-1] == pytest.approx(0.740, abs=0.005)
 
 
 def test_butterworths_tabulated_f_and_g():
@@ -363,25 +378,27 @@ def test_the_close_wound_excess_is_butterworths_eddy_current_reaction():
     coil = Solenoid(0.05, 0.5, 500, 5e-4)
     reduced = field_reach(coil) * coil.pitch / (0.5 * coil.wire_diameter)
     assert 4.0 * math.pi**2 * reduced**2 == pytest.approx(9.87, abs=0.005)
-    assert medhurst_phi(1.0, q=1e4) == pytest.approx(5.94, abs=0.01)
-    assert medhurst_phi(1.0, q=1e4) / MEDHURST_INFINITE[1.0] == pytest.approx(
-        5.94 / 3.41, rel=0.01
+    assert medhurst_phi(1.0, 10.0, reaction=False) == pytest.approx(5.94, abs=0.01)
+    assert medhurst_phi(1.0, 10.0) == pytest.approx(medhurst.PHI[-1, -2], rel=1e-3)
+    assert losses.eddy_reaction(Solenoid(0.05, 1.0, 1000, 1e-3)) == pytest.approx(
+        (medhurst.PHI[-1, -2] - 1.0) / (5.9348 - 1.0), rel=1e-3
     )
 
 
-def test_the_model_carries_no_length_to_diameter_dependence():
-    """Medhurst's phi spans 23 % over l/D at d/s = 0.8; this long-solenoid model is flat."""
-    tabulated = np.array(MEDHURST_LENGTH_08)
-    assert tabulated.max() / tabulated.min() - 1.0 > 0.23
-    flat = [medhurst_phi(0.8, radius=r) for r in (0.02, 0.05, 0.2)]
-    assert flat == pytest.approx([flat[0]] * len(flat), rel=1e-12)
+def test_the_model_follows_medhursts_length_to_diameter_dependence():
+    """phi spans 23 % over l/D at d/s = 0.8, peaking where the coil is as long as it is wide."""
+    phi = np.array([medhurst_phi(0.8, v) for v in MEDHURST_FINITE])
+    assert phi.max() / phi.min() - 1.0 == pytest.approx(0.231, abs=0.005)
+    assert MEDHURST_FINITE[int(np.argmax(phi))] == pytest.approx(0.8)
 
 
 def test_the_proximity_factor_approaches_its_high_frequency_limit_from_below():
-    """phi -> 1 + pi^2 (d/p)^2/2, the ratio of the two leading asymptotic terms."""
+    """phi rises to its tabulated value as the skin depth falls below the wire."""
     for spacing in (0.2, 0.5, 1.0):
-        limit = 1.0 + math.pi**2 * spacing**2 / 2.0
-        phi = np.array([medhurst_phi(spacing, q) for q in (20.0, 60.0, 200.0, 600.0)])
+        limit = medhurst.proximity_factor(spacing, 6.0)
+        phi = np.array(
+            [medhurst_phi(spacing, 6.0, q) for q in (20.0, 60.0, 200.0, 600.0)]
+        )
         assert np.all(np.diff(np.abs(phi - limit)) < 0.0)
         assert phi[-1] == pytest.approx(limit, rel=2e-3)
 

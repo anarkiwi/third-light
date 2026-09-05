@@ -75,22 +75,32 @@ def _cho_solve(p, b):
     return xp.linalg.solve(L.T, xp.linalg.solve(L, xp.asarray(b)))
 
 
-def potential_matrix(rings, ground_plane=True):
+def potential_matrix(rings, ground_plane=True, dielectric=None):
     """Dense symmetric potential coefficient matrix of a ring set, in V/C.
 
     Off-diagonal terms are the ring-to-ring potential; the diagonal is the thin
-    torus self term at the ring's equivalent conductor radius.
+    torus self term at the ring's equivalent conductor radius. A
+    :class:`~thirdlight.geometry.Dielectric` boundary adds the equivalent
+    bound-charge correction of :mod:`thirdlight.em.dielectric`.
     """
     image = rings.mirrored() if ground_plane else rings
-    return _assemble(
+    p = _assemble(
         _fields(rings), np.ascontiguousarray(image.z, dtype=np.float64), ground_plane
     )
+    if dielectric is None:
+        return p
+    # Imported here because the dielectric operators are built on this module's kernels.
+    from thirdlight.em.dielectric import (  # pylint: disable=import-outside-toplevel,cyclic-import
+        polarised_potential,
+    )
+
+    return polarised_potential(p, rings, dielectric, ground_plane)
 
 
-def capacitance_matrix(rings, ground_plane=True):
+def capacitance_matrix(rings, ground_plane=True, dielectric=None):
     """Maxwell capacitance matrix C = P^-1, by Cholesky in float64."""
     xp = array_namespace()
-    p = potential_matrix(rings, ground_plane)
+    p = potential_matrix(rings, ground_plane, dielectric)
     return _cho_solve(p, xp.eye(p.shape[0]))
 
 
@@ -118,22 +128,22 @@ def surface_field(rings, charges):
     own band area, which is exact for the sphere and toroid discretisations. No
     image term enters; the extracted charge already carries the whole field.
     """
-    return np.asarray(charges) / (epsilon_0 * 2.0 * np.pi * rings.a * rings.w)
+    return np.asarray(charges) / (epsilon_0 * rings.area)
 
 
-def unit_potential_charges(rings, ground_plane=True):
+def unit_potential_charges(rings, ground_plane=True, dielectric=None):
     """Ring charges with every ring held at unit potential, in C/V."""
     xp = array_namespace()
-    p = potential_matrix(rings, ground_plane)
+    p = potential_matrix(rings, ground_plane, dielectric)
     return asnumpy(_cho_solve(p, xp.ones(p.shape[0])))
 
 
-def lumped_capacitance(rings, ground_plane=True):
+def lumped_capacitance(rings, ground_plane=True, dielectric=None):
     """Total charge on a ring set held at unit potential: its lumped capacitance."""
-    return float(unit_potential_charges(rings, ground_plane).sum())
+    return float(unit_potential_charges(rings, ground_plane, dielectric).sum())
 
 
 def resonator_capacitance(design):
     """Lumped capacitance at the base of a grounded secondary with its top load."""
     rings = Rings.concat(design.secondary_rings(), design.top_load_rings())
-    return lumped_capacitance(rings, design.ground_plane)
+    return lumped_capacitance(rings, design.ground_plane, design.dielectric())

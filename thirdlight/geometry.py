@@ -14,6 +14,15 @@ import numpy as np
 import yaml
 
 
+def _apportion(total, weights):
+    """Largest-remainder split of ``total`` bands proportional to ``weights``, at least one each."""
+    share = total * np.asarray(weights, dtype=float) / np.sum(weights)
+    counts = np.maximum(np.floor(share), 1.0).astype(int)
+    order = np.argsort(counts - share)[: max(total - counts.sum(), 0)]
+    counts[order] += 1
+    return counts
+
+
 @dataclass(frozen=True)
 class Rings:
     """Coaxial ring discretisation of one or more components."""
@@ -31,6 +40,11 @@ class Rings:
 
     def __len__(self):
         return len(self.a)
+
+    @property
+    def area(self):
+        """Band area 2 pi a w of each ring."""
+        return 2.0 * np.pi * self.a * self.w
 
     @classmethod
     def concat(cls, *parts):
@@ -161,15 +175,98 @@ class Primary:
 
 
 @dataclass(frozen=True)
-class Design:
-    """A complete coil: secondary, top load, primary, and ground plane."""
+class Dielectric:
+    """Closed boundary of a dielectric region: rings with outward unit normals."""
+
+    rings: Rings
+    nr: np.ndarray
+    nz: np.ndarray
+    permittivity: float
+
+    def __post_init__(self):
+        if len(self.nr) != len(self.rings) or len(self.nz) != len(self.rings):
+            raise ValueError("normal components must match the ring count")
+
+    def __len__(self):
+        return len(self.rings)
+
+    @property
+    def area(self):
+        """Band area of each boundary ring."""
+        return self.rings.area
+
+    @property
+    def susceptibility(self):
+        """Bound-charge coefficient lam = (eps_r - 1) / (eps_r + 1)."""
+        return (self.permittivity - 1.0) / (self.permittivity + 1.0)
+
+
+@dataclass(frozen=True)
+class Former:
+    """Dielectric winding former: a coaxial tube, or a solid rod when inner_radius = 0."""
+
+    outer_radius: float
+    length: float
+    base: float = 0.0
+    inner_radius: float = 0.0
+    permittivity: float = 2.56
+
+    def discretise(self, sections):
+        """Bands around the closed meridian contour, allocated by meridian length.
+
+        The contour runs outer wall, top annulus, inner wall where the former is
+        hollow, then bottom annulus, every normal pointing out of the dielectric.
+        Band ``rw`` is w / 4, the flat-strip equivalent radius used for the
+        toroid and sphere discretisations.
+        """
+        top = self.base + self.length
+        edges = [
+            ((self.outer_radius, self.base), (self.outer_radius, top), (1.0, 0.0)),
+            ((self.outer_radius, top), (self.inner_radius, top), (0.0, 1.0)),
+            ((self.inner_radius, top), (self.inner_radius, self.base), (-1.0, 0.0)),
+            (
+                (self.inner_radius, self.base),
+                (self.outer_radius, self.base),
+                (0.0, -1.0),
+            ),
+        ]
+        if self.inner_radius == 0.0:
+            del edges[2]
+        start, end, normal = (np.array(f) for f in zip(*edges))
+        span = np.linalg.norm(end - start, axis=1)
+        counts = _apportion(sections, span)
+        w = np.repeat(span / counts, counts)
+        t = np.concatenate([(np.arange(k) + 0.5) / k for k in counts])[:, None]
+        point = np.repeat(start, counts, axis=0) + t * np.repeat(
+            end - start, counts, axis=0
+        )
+        normal = np.repeat(normal, counts, axis=0)
+        return Dielectric(
+            rings=Rings(
+                a=point[:, 0],
+                z=point[:, 1],
+                n=np.ones(w.size),
+                w=w,
+                rw=0.25 * w,
+            ),
+            nr=normal[:, 0],
+            nz=normal[:, 1],
+            permittivity=self.permittivity,
+        )
+
+
+@dataclass(frozen=True)
+class Design:  # pylint: disable=too-many-instance-attributes
+    """A complete coil: secondary, top load, former, primary, and ground plane."""
 
     secondary: Solenoid
     primary: Primary
     top_load: Toroid | Sphere | None = None
+    former: Former | None = None
     ground_plane: bool = True
     sections: int = 120
     top_load_sections: int = 32
+    former_sections: int = 96
 
     def secondary_rings(self):
         """Ring discretisation of the secondary winding."""
@@ -180,6 +277,12 @@ class Design:
         if self.top_load is None:
             return Rings(*(np.zeros(0) for _ in range(5)))
         return self.top_load.discretise(self.top_load_sections)
+
+    def dielectric(self):
+        """Discretised boundary of the winding former, or None if there is none."""
+        if self.former is None:
+            return None
+        return self.former.discretise(self.former_sections)
 
     def primary_rings(self):
         """Ring discretisation of the primary winding."""
@@ -195,6 +298,7 @@ class Design:
     def from_dict(cls, spec):
         """Build a design from a plain mapping."""
         spec = dict(spec)
+        former = spec.pop("former", None)
         top = spec.pop("top_load", None)
         kinds = {"toroid": Toroid, "sphere": Sphere}
         if top is not None:
@@ -207,5 +311,6 @@ class Design:
             secondary=Solenoid(**spec.pop("secondary")),
             primary=Primary(**spec.pop("primary")),
             top_load=top,
+            former=None if former is None else Former(**former),
             **spec,
         )

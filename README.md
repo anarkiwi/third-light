@@ -27,7 +27,8 @@ coupling(design, modes)      # primary-to-mode k
 quality_factor(design, modes)  # unloaded Q
 ```
 
-Implemented: EM matrices and the ladder eigen-solve (roadmap phase 1). Circuit,
+Implemented: EM matrices and the ladder eigen-solve, the dielectric winding
+former and the Medhurst proximity correction (roadmap phases 1 and 1a). Circuit,
 driver, streamer, thermal and batched GPU sweeps are not yet built.
 
 ## Test

@@ -27,8 +27,8 @@ detailed plasma chemistry.
 | Domain | Model | Primary references |
 |---|---|---|
 | Magnetostatics | Filament/ring mutual inductance by complete elliptic integrals (Maxwell), assembled into dense L matrix over secondary sections, primary turns and top-load ring | acmi [4], Knight [10] |
-| Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1. Winding former permittivity is not yet modelled | tssp [3], Medhurst [9], Voitkāns [7] |
-| Conductor loss | Skin and proximity AC resistance per section from the exact cylinder diffusion solution (Butterworth [27]); tank capacitor ESR; form dielectric loss | [27], [11], [9] |
+| Electrostatics | Axisymmetric method of moments: ring charges on secondary, top load, breakout point, ground-plane images; potential coefficient matrix P, Maxwell capacitance C = P^-1. The winding former is an equivalent bound surface charge on its own boundary, radiating in the same vacuum Green's function | tssp [3], Medhurst [9], Voitkāns [7] |
+| Conductor loss | Skin and proximity AC resistance per section from the exact cylinder diffusion solution (Butterworth [27]), the proximity term scaled to Medhurst's measured phi [9]; tank capacitor ESR; form dielectric loss | [27], [11], [9] |
 | Secondary dynamics | N-section coupled L/C ladder from the matrices above; modal reduction to M eigenmodes for time domain; full ladder for voltage-profile studies | tssp [3], Voitkāns [7], Denicolai [1] |
 | Primary circuit + bridge | Half/full bridge as piecewise-linear switch states; Vce(sat) = V0 + r·I; body/anti-parallel diode; dead time; DC bus C with rectifier ripple | Denicolai [1], de Queiroz [5], [6] |
 | Driver/control | Primary current transformer feedback, phase-lead (UD2.x style), comparator + gate delay, interrupter (pulse width, PRF, MIDI note → PRF), QCW bus ramp or phase-shift modulation | Ward [12], Loneoceans [13], Kaizer [14], Burnett [15] |
@@ -51,8 +51,18 @@ detailed plasma chemistry.
    self-inductance of a finite-width ring. K, E via AGM in a Numba CUDA
    kernel; O(N²) elements per design, batched over designs on a 2D grid.
 3. P matrix: ring-charge potential coefficients (elliptic integral K), image
-   rings for the ground plane, optional grounded strike ring. C = P^-1 by
-   Cholesky (P is SPD) in float64 via cuSOLVER (`cupy.linalg`), batched.
+   rings for the ground plane, optional grounded strike ring. A dielectric former
+   enters as bound band charges b on its boundary, satisfying
+   sigma_b = 2 eps0 lam E_n with lam = (eps_r - 1)/(eps_r + 1) and E_n the
+   principal-value normal field of every charge; eliminating b leaves
+   P_eff = P_cc + P_cb (I - G A F_bb)^-1 G A F_bc, so nothing downstream of P
+   changes. The self term of the normal-field operator is fixed by Gauss's law
+   rather than dropped: a unit charge on a closed surface sends 1/(2 eps0)
+   through it, which pins the area-weighted column sums and hence the diagonal,
+   and is worth an order of convergence. Point-to-band integrals use a sinh
+   grading (Johnston-Elliott), without which the wire sitting one wire radius off
+   the former wall makes P indefinite. C = P^-1 by Cholesky (P is SPD) in float64
+   via cuSOLVER (`cupy.linalg`), batched.
    Medhurst's C_L is *not* this matrix: it is the lumped equivalent of the
    resonating coil, and at l/D = 1, D = 10 cm his 4.6 pF is below the 5.56 pF of
    the inscribed sphere, so no static capacitance can equal it. The static
@@ -64,31 +74,49 @@ detailed plasma chemistry.
    f_res, mode shapes v_m(z), effective inductance/capacitance per mode, k
    between primary and mode 1. Keep M = 4–16 modes for time domain.
 
-### 3.1a Known phase-1 residuals
+### 3.1a Phase-1 residuals and what closed them
 
-Predicted f_res runs 2–9 % above Medhurst's C_L across l/D = 1..5, one-signed
-(model capacitance always low). Medhurst wound every coil on a solid polystyrene
-rod, εr = 2.56 (Knight [10] §4), so his C_L carries a former dielectric this
-air-only model has no term for; the residual has the right sign and roughly the
-right size for that omission. Two consequences: the electrostatic solve needs a
-dielectric region before the Medhurst comparison means anything at the 1–2 %
-level, and the air-cored measured coils of tssp and Denicolai are the better
-phase-1 benchmark. The published Medhurst table in circulation is itself up to
-8.8 % above Medhurst's own regression for l/D ≥ 2.5, so part of that column is
-transcription rather than physics.
+The air-only model ran f_res 2–9 % above Medhurst's C_L across l/D = 1..5,
+one-signed. Medhurst wound every coil on a solid polystyrene rod, eps_r = 2.56
+(Knight [10] §4), and the bound-charge former of §3.1 step 3 moves f_res by
+−9.3, −5.3, −3.4 and −1.9 % at l/D = 1, 2, 3 and 5: the right sign and the right
+size, closing the residual at l/D = 1–2 and overshooting at l/D >= 3. That the
+overshoot grows with l/D is consistent with the published Medhurst table in
+circulation being up to 8.8 % above Medhurst's own regression for l/D >= 2.5, so
+part of that column is transcription rather than physics. The dielectric operator
+itself is validated where a closed form exists — a conducting sphere inside a
+concentric dielectric shell, every interface dielectric-to-vacuum — where its own
+contribution to the error is below 1e-4 and the residual is the conductor
+discretisation the air model already carried.
+
+Against the thirteen bare air-cored coils tssp publishes with measurements [3],
+f1 lands at 3.7 % rms and is unbiased, mean +0.05 %, against tssp's own 2.2 % rms
+on the same coils; the twenty-three published overtones f3..f13 land at 1.4 % rms
+and 3.8 % worst. That f1 is the weak mode and the overtones are not points at what
+neither model carries: tssp images a ground plane of the coil's own height in
+radius where this model images an infinite one, and neither carries the formers,
+whose material tssp publishes for no coil. Higher modes hold their charge along
+the winding rather than at its ends, so they see little of either. The two coils
+tssp itself misses worst, sk16b55 at -3.7 % and sk20b49 at -5.0 %, this model
+misses by -3.5 % and -4.7 %, which puts that residual in the measurements or in
+the published geometry rather than in either model. Denicolai's Thor, measured at
+80.22 mH, comes out at 79.35 mH from a filament sum over its 939 turns.
 
 Winding AC resistance is exact for skin effect and for proximity in a uniform
-transverse field, but the uniform-field formulation omits the neighbouring turns'
-eddy-current reaction. That is immaterial while the wire-diameter-to-pitch ratio
-d/s ≤ 0.2 (within 1 % of Medhurst's Φ) but grows to +16 % at d/s = 0.5 and +74 %
-at d/s = 1. Butterworth quantifies exactly this: he gives 5.94 for a close-wound
-infinite solenoid ignoring the eddy field against 3.41 with it, and the model
-here returns 1 + π²/2 = 5.93. The model also carries no l/D dependence, over
-which Medhurst's Φ spans 23 % at d/s = 0.8. Close-wound secondaries therefore get
-their R over-predicted, so Q is a lower bound. The fix is to interpolate
-Medhurst's measured Φ above d/s = 0.3 rather than to extend the theory: his
-d/s ≤ 0.3 and l/D ≥ 8 cells are themselves computed from Butterworth, so
-validating a corrected model there would be circular.
+transverse field, but that formulation omits the neighbouring turns'
+eddy-current reaction and holds the field factor at its infinite-solenoid value
+u = pi^2. Its high-frequency excess over the straight wire is then pi^2 (d/s)^2/2,
+which is +0.6 %, +16 % and +74 % above Medhurst's measured phi at d/s = 0.2, 0.5
+and 1.0, and carries no l/D dependence at all, over which his phi spans 23 % at
+d/s = 0.8. Extending the theory would be circular — his d/s <= 0.3 cells are
+themselves Butterworth's — so the proximity term is instead scaled by the ratio
+of his measured excess to the model's, interpolated over his Table VIII in d/s
+and in l/D compactified as x/(1+x). The scaling is a constant per coil, exact in
+the asymptotic regime he tabulated and immaterial below it, where the proximity
+term is O(q^4); it absorbs both the eddy reaction and the finite-length field
+factor. R_ac then reproduces Table VIII to 7e-5 over every measured cell, and the
+close-wound infinite solenoid falls from Butterworth's 5.94 without the reaction
+field to Medhurst's 3.41 with it.
 
 Mode 1 converges to 0.1 % by 200 sections. Higher modes converge more slowly —
 the 4th is still 6 % short of the uniform-line 1:3:5:7 ratio at 400 sections —
@@ -222,13 +250,17 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Single-ring and coaxial-loop inductance | closed form | 1e-10 rel |
 | Solenoid inductance | Wheeler, acmi published examples | 1 % |
 | Isolated sphere and toroid capacitance | closed form; Kelvin image series for a sphere over a plane | 0.25/N, 1 % |
-| Solenoid f_res | Medhurst C_L via the eigen-solve | air model runs +2 to +9 % high, see below |
-| Solenoid f_res | tssp measured coils, Denicolai measurements [1] | 1–2 % |
+| Dielectric-coated sphere capacitance | closed form for a conducting sphere in a concentric shell | 1 %, dielectric operator alone below 1e-4 |
+| Bound-charge field operator | Gauss's law: area-weighted column sums of F_bb are 1/(2 eps0) | 1e-12 rel |
+| Solenoid f_res | Medhurst C_L via the eigen-solve | see §3.1a |
+| Solenoid f_res | tssp measured air-cored coils [3] | f1 within 4 % rms, overtones within 2 % rms |
+| Solenoid inductance | Denicolai's measured 80.22 mH on Thor [1] | 1.5 %, the derived-geometry spread |
 | Coupling k | acmi | 1 % |
 | Lumped 4th-order DRSSTC transient | ngspice via PySpice; de Queiroz mode ratios 1:2:3, 1:3:5 [5] | numerical |
 | Phase-lead/ZCS behaviour | UD2.x documented behaviour [12], Kaizer static tests [14] | qualitative + timing |
 | Spark length vs power | Freau law (SGTC) [16]; published DRSSTC/QCW data [13], [14] | within data spread |
-| Winding AC resistance | Butterworth's Tables I and II [27]; Medhurst Φ [9] | 5e-4 on Butterworth; 1 % for d/s ≤ 0.2, see §3.1a |
+| Winding AC resistance | Butterworth's Tables I and II [27] for the uncorrected model | 5e-4 |
+| Winding AC resistance | Medhurst's Table VIII over every measured d/s and l/D [9] | 1e-3 |
 | Unloaded secondary Q | Denicolai measured 326 at 65.6 kHz [1]; Kaizer tabulations [14] | within the published band |
 | IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
@@ -252,7 +284,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 1. EM matrices, eigen-solve, validation against acmi/Wheeler/Medhurst.
 1a. Dielectric former in the MoM, and validation against air-cored measured
    coils (tssp, Denicolai), to close the Medhurst f_res residual; Medhurst Φ
-   interpolation for close-wound AC resistance. Both are documented in §3.1a.
+   interpolation for close-wound AC resistance. Done; both are documented in
+   §3.1a.
 2. Circuit + driver + exponential integrator, SSTC and DRSSTC, SPICE parity.
 3. Streamer load and length dynamics, breakout, spark-length calibration.
 4. Thermal and loss models, QCW modulation, MIDI interrupter.

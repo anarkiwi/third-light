@@ -13,7 +13,7 @@ import numpy as np
 from scipy.constants import mu_0
 
 from thirdlight.backend import array_namespace, kernel
-from thirdlight.em import inductance
+from thirdlight.em import inductance, medhurst
 
 RHO_COPPER_20C = 1.7241e-8
 ALPHA_COPPER = 3.93e-3
@@ -145,11 +145,30 @@ def field_reach(coil):
     return 0.25 * coil.wire_diameter / coil.pitch
 
 
-def ac_ratio(coil, frequency, rho=None, **kwargs):
-    """R_ac/R_dc of a long single-layer solenoid: skin plus proximity."""
+def eddy_reaction(coil):
+    """Medhurst's correction to the uniform-transverse-field proximity term.
+
+    The uniform field ignores the neighbouring turns' eddy-current reaction and
+    holds the field factor at its infinite-solenoid value, so it over-predicts on
+    both counts; :func:`thirdlight.em.medhurst.eddy_reaction` scales it to measurement.
+    """
+    return medhurst.eddy_reaction(
+        coil.wire_diameter / coil.pitch, 0.5 * coil.length / coil.radius
+    )
+
+
+def ac_ratio(coil, frequency, rho=None, reaction=True, **kwargs):
+    """R_ac/R_dc of a single-layer solenoid: skin plus proximity.
+
+    The proximity term is scaled by :func:`eddy_reaction` unless ``reaction`` is
+    false; the scaling is exact where Medhurst measured, in the asymptotic regime
+    his table covers, and is applied at every frequency because below it the
+    proximity term is O(q^4) and immaterial.
+    """
     rho = resistivity(**kwargs) if rho is None else rho
     q = kelvin_argument(coil.wire_diameter, frequency, rho)
-    return skin_ratio(q) + proximity_ratio(q) * field_reach(coil) ** 2
+    scale = eddy_reaction(coil) if reaction else 1.0
+    return skin_ratio(q) + scale * proximity_ratio(q) * field_reach(coil) ** 2
 
 
 def dc_resistance(coil, rho=None, **kwargs):

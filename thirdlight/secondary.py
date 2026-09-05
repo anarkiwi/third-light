@@ -80,7 +80,7 @@ def ladder(design, sections=None):
     xp = array_namespace()
     node = xp.asarray(node_map(groups, len(top)))
     rings = capacitance.capacitance_matrix(
-        Rings.concat(turns, top), design.ground_plane
+        Rings.concat(turns, top), design.ground_plane, design.dielectric()
     )
     return Ladder(
         L=inductance.reduce_sections(inductance.inductance_matrix(turns), groups),

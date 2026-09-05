@@ -27,9 +27,19 @@ coupling(design, modes)      # primary-to-mode k
 quality_factor(design, modes)  # unloaded Q
 ```
 
-Implemented: EM matrices and the ladder eigen-solve, the dielectric winding
-former and the Medhurst proximity correction (roadmap phases 1 and 1a). Circuit,
-driver, streamer, thermal and batched GPU sweeps are not yet built.
+```python
+from thirdlight.machine import Machine
+
+machine = Machine.from_yaml("examples/drsstc.yaml")
+result = machine.run(200e-6)   # bridge, tank and modes, event stepped
+result.primary_current         # A, sampled at every step and switching instant
+result.top_voltage             # V
+```
+
+Implemented: EM matrices and the ladder eigen-solve, the dielectric former and
+Medhurst proximity correction, and the bridge, driver and exponential integrator
+(roadmap phases 1, 1a and 2). Streamer, thermal and batched GPU sweeps are not
+yet built.
 
 ## Test
 

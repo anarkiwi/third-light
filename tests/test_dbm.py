@@ -39,13 +39,12 @@ LOAD_RINGS = TOP_LOAD.discretise(16)
 LOAD_SEED = (0.2, 0.0, 0.62)
 OUT = (1.0, 0.0, 0.0)
 
-# Mean and seed-to-seed spread measured over six seeds at CLUSTER segments.
-CLUSTER = 500
-PLANAR_ETA_ONE = (2.264, 0.170)
-PLANAR_EDEN = (2.240, 0.195)
+SPATIAL_CLUSTER, SPATIAL_SEEDS = 300, 5
+# Measured mean and seed spread; only their ordering is a validation, see 3.4c.
+SPATIAL_DIMENSION = ((0.0, 3.117, 0.202), (3.0, 2.445, 0.187), (6.0, 1.728, 0.135))
 
 
-def free_tree(eta, seed, count=CLUSTER, plane=True, **kw):
+def free_tree(eta, seed, count, plane=True, **kw):
     """One cluster grown into free space off a small sphere, the radial DBM geometry."""
     growth = Growth(
         step=STEP,
@@ -222,43 +221,24 @@ def test_growth_loads_the_electrode():
 
 
 @pytest.mark.slow
-def test_planar_dimension_at_eta_one():
-    """R_g ~ N^(1/D) at eta = 1 in a plane, against the band six seeds actually span.
-
-    A planar cluster in a three-dimensional kernel is screened by field lines
-    that leave the plane, so it is not the two-dimensional universality class
-    and [18]'s 1.75 is nowhere in this band; see docs/design.md 3.4c.
-    """
-    mean, spread = PLANAR_ETA_ONE
-    seeds = [fractal_dimension(free_tree(1.0, seed).nodes) for seed in range(5)]
-    assert np.mean(seeds) == pytest.approx(mean, abs=4.0 * spread / math.sqrt(5))
-    assert np.mean(seeds) > 1.75 + spread
-
-
-@pytest.mark.slow
 def test_dimension_falls_as_eta_rises():
-    """The one ordering [18] pins that a single noisy value does not."""
-    means = [
-        np.mean(
-            [
-                fractal_dimension(free_tree(eta, s, 300, plane=False).nodes)
-                for s in range(4)
-            ]
+    """The ordering [18] pins, which is all this estimator resolves; see design.md 3.4c.
+
+    The absolute reading is not a dimension at this size -- eta = 0 comes out
+    above the embedding dimension and is still rising with N -- so what is
+    asserted is the ordering, and each mean against the band its seeds span.
+    """
+    means = []
+    for eta, expected, spread in SPATIAL_DIMENSION:
+        seeds = [
+            fractal_dimension(free_tree(eta, s, SPATIAL_CLUSTER, plane=False).nodes)
+            for s in range(SPATIAL_SEEDS)
+        ]
+        means.append(np.mean(seeds))
+        assert means[-1] == pytest.approx(
+            expected, abs=4.0 * spread / math.sqrt(SPATIAL_SEEDS)
         )
-        for eta in (0.0, 3.0, 6.0)
-    ]
     assert means[0] > means[1] > means[2]
-
-
-@pytest.mark.slow
-def test_eden_limit_is_the_embedding_dimension():
-    """At eta = 0 every admissible candidate is equally likely, so growth is compact."""
-    mean, spread = PLANAR_EDEN
-    trees = [free_tree(0.0, seed) for seed in range(3)]
-    dimensions = [fractal_dimension(tree.nodes) for tree in trees]
-    assert np.mean(dimensions) == pytest.approx(mean, abs=4.0 * spread / math.sqrt(3))
-    assert np.mean(dimensions) == pytest.approx(2.0, abs=3.0 * spread)
-    assert all((children(tree) > 1).mean() > 0.2 for tree in trees)
 
 
 @pytest.mark.slow

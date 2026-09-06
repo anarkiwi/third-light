@@ -467,19 +467,37 @@ channels would interpenetrate the bordered matrix comes out indefinite, which is
 the exact statement that the model cannot carry that segment, so the candidate is
 dropped and another drawn rather than screened by a geometric threshold.
 
-What the dimensions do and do not reproduce is worth stating plainly. Measured
-by R_g ~ N^(1/D) over one cluster's own growth, the estimator is biased high at
-reachable sizes, and the η = 0 limit calibrates that bias because compact growth
-must give exactly the embedding dimension: it reads 2.24 in a plane at 500
-segments against 2, and 3.12 in space at 300 against 3. Corrected by its own
-calibration, η = 1 in space lands near the 2.5 of three-dimensional Laplacian
-growth. In a plane it does not land on [18]'s 1.75 and nothing here should be
-adjusted until it does: a planar cluster in a three-dimensional kernel is
-screened by field lines that leave the plane, its fjords stay open, and it is not
-the two-dimensional universality class whatever η is. What survives, and what §5
-checks, is the ordering [18] pins — D falls monotonically with η — together with
-the two limits it is bracketed by, the Eden cluster at η = 0 and the unbranched
-needle as η grows.
+This estimator does not resolve D against published values at sizes reachable in
+a test budget, and that is stated rather than worked around. Measured by
+R_g ~ N^(1/D) over one cluster's own growth, the reading in space rises with the
+cluster: η = 0 goes 3.20, 3.63, 3.70 over 300, 600 and 800 segments and η = 1
+goes 2.74, 2.98, 3.02, all three seeds each. Both sit at or above the embedding
+dimension, which is impossible asymptotically, so the absolute number is a
+finite-size reading and not a dimension.
+
+Three candidate calibrations were tried against that and none holds. The η = 0
+limit is not one: its reading moves with N as fast as anything it would correct,
+so the implied factor is 0.94 at 300 segments and 0.81 at 800, and any η = 1
+value derived through it moves with it. It is not a calibration in principle
+either — `Growth.cone` is a forward hemisphere about each node's own direction,
+which is a forward-biased branching tree and not isotropic Eden growth, and
+nothing forces its dimension to the embedding dimension. Opening the cone to the
+full sphere, which is genuinely isotropic, does not rescue it: η = 0 then reads
+3.39, 3.63, 3.62 over the same sizes, no nearer 3 and no better converged. And
+the planar restriction cannot discriminate η at all: over six seeds at 600
+segments η = 0 reads 2.234 ± 0.142 and η = 1 reads 2.262 ± 0.147, indistinguishable
+and in the wrong order, so nothing about [18]'s 1.75 can be said either way from
+it. The planar mode is kept because the needle limit is measured in it.
+
+What survives is the ordering [18] pins, and §5 checks that and nothing more:
+in space D falls with η, 3.12 > 2.45 > 1.73 over η = 0, 3 and 6 at 300 segments
+and five seeds each, a separation of five to six standard errors that holds at
+every size measured and widens with N. Branching count does not carry the
+ordering — the fork fraction is 0.29, 0.28, 0.24 across those same η, inside its
+own spread — so it is not claimed. The other end is sharp: at large η growth
+collapses to one channel, a fork per thirty segments and D → 1.08. Resolving the
+absolute dimension needs clusters an order of magnitude larger than a 60 s test,
+and is an open residual of the same kind as §3.4a's.
 
 ### 3.5 Loss extraction
 
@@ -669,10 +687,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Series resistance reduction | sum R_k for a chain charged at its tip; R_t + R_b/2 for a symmetric fork | 1e-12 rel |
 | Subtree charges | a naive per-node ancestor walk on a random tree | exact |
 | Incremental bordered factor | `scipy.linalg.cholesky` of the assembled mixed matrix, through a growth | 1e-10 rel, lands at 9e-15 |
-| Growth dimension vs eta | D falls with eta [18]; eta = 0, 3, 6 in space over four seeds each | ordering, 3.14 > 2.50 > 1.76 |
-| Eden limit, eta = 0 | the embedding dimension, which compact growth must give | 2.24 +- 0.20 in a plane at 500 segments |
+| Growth dimension vs eta | D falls with eta [18]; eta = 0, 3, 6 in space, five seeds each | the ordering only, 3.12 > 2.45 > 1.73; absolute D unresolved, 3.4c |
 | Needle limit, eta large | unbranched, D -> 1 | one fork per 30 segments, D = 1.08 |
-| Growth dimension, eta = 1 in a plane | Niemeyer's 1.75 [18] | not reproduced, 2.26 +- 0.17 over six seeds; see 3.4c |
 | Grown tree structure | parents precede children, above ground, outside the electrode, every segment one step | exact, 1e-15 on the length |
 | Growth termination | the step cap at zero critical field; a short tree above it; none above the electrode's own | exact |
 | Grown channel load | `channel_load` against segment count | capacitance rising, series resistance positive |

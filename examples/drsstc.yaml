@@ -27,9 +27,18 @@ modes: 2
 tank:
   tune: 1.0
   resistance: 0.05
+  dissipation_factor: 0.001
+# Switching energies of a common DRSSTC brick, ascending in amperes at v_test.
 bridge:
-  igbt: {v0: 1.2, r: 0.012}
-  diode: {v0: 1.0, r: 0.010}
+  igbt:
+    v0: 1.2
+    r: 0.012
+    turn_on: {coefficients: [0.0, 8.0e-5, 5.0e-8], alpha: 3.0e-3, v_test: 600.0}
+    turn_off: {coefficients: [0.0, 7.0e-5, 2.0e-8], alpha: 1.5e-3, v_test: 600.0}
+  diode:
+    v0: 1.0
+    r: 0.010
+    recovery: {coefficients: [0.0, 5.0e-5, -3.0e-8], alpha: 5.0e-3, v_test: 600.0}
   full: true
 driver:
   lead_angle: 12.0

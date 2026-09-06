@@ -25,7 +25,9 @@ def _bridge(spec):
     """Bridge from a mapping of two device mappings and the topology flag."""
     spec = dict(spec)
     return Bridge(
-        igbt=Switch(**spec.pop("igbt")), diode=Switch(**spec.pop("diode")), **spec
+        igbt=Switch.from_dict(spec.pop("igbt")),
+        diode=Switch.from_dict(spec.pop("diode")),
+        **spec,
     )
 
 
@@ -136,6 +138,7 @@ class Machine:  # pylint: disable=too-many-instance-attributes
                 tank,
                 bridge,
                 bus,
+                0.0 if design.former is None else design.former.loss_tangent,
             ),
         )
 

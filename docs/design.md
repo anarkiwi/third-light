@@ -331,6 +331,52 @@ which is one reason the gradient that lands in the band sits below the cold
 streamer value. Phase 6 removes the question by growing the channel
 geometrically instead.
 
+### 3.5 Loss extraction
+
+Conduction loss is already in the state space and comes back out of it by
+subtraction. The primary loop resistance of a bridge state is tank.resistance
+plus n_dev r of the device conducting in it, and tank.resistance is itself the
+rest of the loop plus the tank capacitor's ESR, DF/(omega C) at the driven
+resonance, so the device differential, the capacitor and the loop separate
+analytically instead of being re-derived; the modal rows split the same way into
+the winding resistance and the series equivalent tan d/(omega c_m) of the
+former's dielectric conductance. The constant part of the device drop is the
+input column u[0] the run already recorded, so n_dev v0 |i_p| needs nothing
+either. Every weight is a function of the recorded bridge state alone, which
+makes the ledger a post-pass over a Result: IGBT and diode conduction, primary
+loop, tank ESR, per-mode winding, former dielectric and streamer channel, whose
+total is Result.dissipation to rounding -- the quantity the burst energy balance
+of §5 already validates.
+
+Switching energy is not separable that way because it is not in there at all.
+The piecewise-linear state space carries no transition dynamics, so a
+commutation costs nothing in it, and adding a switching term to that balance
+would open the ledger rather than close it. It is attributed afterwards, at the
+instants the event stepper resolved exactly, and reported beside the total
+rather than inside it. E_on, E_off and E_rr are low-order polynomials in current
+with a linear junction-temperature coefficient, scaled against the datasheet's
+test voltage by (V/V_test)^Kv: the app-note form of [20] and [21]. At Kv = 1,
+the default, that is the closed form of a linear voltage/current transition
+overlap; [20] quotes 1.3 to 1.4 for an IGBT and about 0.6 for a diode's E_rr,
+so the exponent is a parameter of the fit rather than fixed.
+
+The bridge polarity is what the attribution reads. A change of conducting kind
+at one polarity is the handover between IGBTs and the diodes gated across them,
+which happens at the current zero those IGBTs already stand at and costs
+nothing. A change of polarity is the hard commutation: the IGBT leaving
+conduction turns off the current it was carrying, and the one entering takes the
+current off the opposite leg's diodes against the whole bus and recovers them.
+Every device in series with the tank commutates together, two in a full bridge
+and one in a half, and each blocks the bus itself, so the swing gain does not
+enter. Under ZCS both fall on the current zero and cost nothing; a phase lead
+turns off into current and turns on soft, and a gate delay does the reverse,
+which is the asymmetry that kills the IGBTs of a lagging DRSSTC.
+
+Junction temperature is an argument with a default, not a state. The default
+applies each fit at its own test temperature, extrapolating nothing; phase 4b
+adds the Cauer networks and the between-burst update and passes a real
+temperature back in.
+
 ## 4. Package layout
 
 ```
@@ -379,7 +425,12 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Winding AC resistance | Butterworth's Tables I and II [27] for the uncorrected model | 5e-4 |
 | Winding AC resistance | Medhurst's Table VIII over every measured d/s and l/D [9] | 1e-3 |
 | Unloaded secondary Q | Denicolai measured 326 at 65.6 kHz [1]; Kaizer tabulations [14] | within the published band |
-| IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
+| Switching-energy fit | the closed form of a linear transition overlap, integral v i dt | 1e-12 rel |
+| Conduction loss | closed form for a sinusoid through v0 + r i over whole half cycles | 1e-6 rel, the trapezoid's own order |
+| Component loss ledger | its own total against Result.dissipation | 1e-12 rel |
+| Commutation attribution | the gate and state history: instant, sign and count of every event | exact |
+| Switching-energy scaling | the blocking-voltage power law and the temperature coefficient reproduced | 1e-14 rel |
+| IGBT switching loss | the worked example of the Renesas app note [20] §5, its inverter averaging supplied by the test | 5 %, lands at 0.2 % |
 | Event locator | a functional leaving its own zero crosses half a period on | 1e-9 rel |
 | Streamer length ODE | `solve_ivp` DOP853, both regimes of (|v| - E l)+ | 1e-9 rel |
 | Streamer branch | `solve_ivp` DOP853 on the augmented state space | 1e-9 rel |
@@ -419,6 +470,14 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    the residuals and what the published data pins are in §3.4a.
 4. Thermal and loss models. The QCW bus ramp and the MIDI interrupter came
    with the driver in phase 2, so what is left here is the thermal side.
+4a. Switching-energy device fits, commutation attribution and the
+   component-resolved loss ledger. Done; §3.5. Validated on the analytic and
+   self-consistent references of §5, and on [20]'s own worked example, whose
+   inverter averaging the test supplies because this model has no equivalent
+   of it.
+4b. Cauer junction networks, the junction-temperature state and the
+   between-burst thermal update, consuming 4a's per-component energies.
+   Outstanding.
 5. Batched GPU sweeps and optimisation front end.
 6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
 

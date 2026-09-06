@@ -237,6 +237,7 @@ class Former:
     base: float = 0.0
     inner_radius: float = 0.0
     permittivity: float = 2.56
+    loss_tangent: float = 0.0
 
     def discretise(self, sections):
         """Bands around the closed meridian contour, allocated by meridian length.

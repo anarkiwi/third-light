@@ -28,6 +28,7 @@ All lengths are metres, measured from the ground plane at z = 0.
 | `former.length` | axial length of the former |
 | `former.base` | height of the former's bottom face |
 | `former.permittivity` | relative permittivity, default 2.56 (polystyrene) |
+| `former.loss_tangent` | effective loss tangent of the modal capacitance, default 0; it adds tan d/(omega c_m) to each mode's damping, so the share of the modal field the former holds is the caller's to apply |
 | `ground_plane` | image a conducting plane at z = 0 |
 | `sections` | secondary ring sections, 50–400 |
 | `top_load_sections` | rings around the top-load surface |
@@ -45,11 +46,19 @@ are resolved against the first secondary mode at load time.
 | `tank.capacitance` | primary series capacitance, F |
 | `tank.tune` | in place of `capacitance`: primary resonance as a multiple of mode 1 |
 | `tank.resistance` | primary loop resistance including tank ESR, ohm |
+| `tank.dissipation_factor` | tank capacitor DF, default 0. Its ESR, DF/(omega C) at the driven resonance, is separated out of `tank.resistance` for the loss ledger rather than added to it, and is capped at it |
 | `tank.inductance` | override the primary inductance taken from the geometry |
 | `bus.capacitance` | DC bus reservoir, F; omit for a stiff bus held at the driver's voltage |
 | `bus.resistance` | rectifier and mains series resistance, ohm; positive with a reservoir |
 | `bridge.igbt.v0`, `bridge.igbt.r` | IGBT knee voltage and slope resistance |
 | `bridge.diode.v0`, `bridge.diode.r` | anti-parallel diode, same form |
+| `bridge.igbt.turn_on`, `bridge.igbt.turn_off` | switching-energy fits, each a mapping of the five keys below; omitted fits are zero, and only the IGBT's are read |
+| `bridge.diode.recovery` | reverse-recovery energy fit, the same mapping; only the diode's is read |
+| `...coefficients` | ascending polynomial in amperes, J at the test point: `[a0, a1, a2]` is a0 + a1 I + a2 I^2 |
+| `...alpha` | linear junction-temperature coefficient of the fit, per kelvin, default 0 |
+| `...v_test` | datasheet blocking voltage the fit was taken at, V; omit it for a fit that is not voltage scaled |
+| `...exponent` | voltage exponent Kv, default 1 for the linear form; measured IGBTs run 1.3 to 1.4 and diode recovery about 0.6 |
+| `...tj_test` | datasheet junction temperature the fit was taken at, C, default 125 |
 | `bridge.full` | true for a full bridge, false for a half bridge |
 | `driver.lead_angle` | current-transformer phase lead in degrees at mode 1 |
 | `driver.delay` | comparator plus gate propagation delay, s |

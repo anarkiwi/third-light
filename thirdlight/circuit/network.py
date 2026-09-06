@@ -17,11 +17,30 @@ from thirdlight.em import inductance, losses
 
 @dataclass(frozen=True)
 class Tank:
-    """Primary tank: series capacitance, loop resistance, and inductance override."""
+    """Primary tank: series capacitance, loop resistance, and inductance override.
+
+    ``resistance`` is the whole primary loop, the capacitor's ESR included. A
+    ``dissipation_factor`` does not add to it: it says how much of it the
+    capacitor is, so the loss ledger can report the two apart.
+    """
 
     capacitance: float
     resistance: float = 0.0
     inductance: float | None = None
+    dissipation_factor: float = 0.0
+
+    def esr(self, frequency):
+        """Capacitor ESR at ``frequency``, DF/(omega C), part of :attr:`resistance`.
+
+        Capped at the loop resistance it is a share of, so a factor inconsistent
+        with the loop given cannot make the rest of the loop negative.
+        """
+        if self.dissipation_factor <= 0.0:
+            return 0.0
+        return min(
+            losses.capacitor_esr(self.capacitance, frequency, self.dissipation_factor),
+            self.resistance,
+        )
 
 
 @dataclass(frozen=True)
@@ -59,6 +78,8 @@ class Network:  # pylint: disable=too-many-instance-attributes
     bridge: Bridge
     bus: Bus
     streamer: tuple | None = None
+    esr: float = 0.0
+    loss_tangent: float = 0.0
 
     @property
     def size(self):
@@ -79,6 +100,16 @@ class Network:  # pylint: disable=too-many-instance-attributes
         """
         return -np.diagonal(
             self.inductances @ self.a[:, : self.loops, : self.loops], axis1=-2, axis2=-1
+        )
+
+    @property
+    def dielectric(self):
+        """Per-mode series resistance the former's loss tangent adds, ohm.
+
+        It is already inside :attr:`resistances`; the ledger separates it out.
+        """
+        return _dielectric_resistance(
+            self.capacitances[1:], self.frequencies, self.loss_tangent
         )
 
     def currents(self, x):
@@ -144,6 +175,19 @@ class Network:  # pylint: disable=too-many-instance-attributes
         return self.bridge.drive(gate, current, v_bus)
 
 
+def _dielectric_resistance(capacitances, frequencies, loss_tangent):
+    """Series resistance equivalent to a parallel dielectric conductance, per mode.
+
+    G = omega C tan d in parallel with C dissipates the same as G/(omega C)^2 in
+    series with it at that frequency, which each mode is evaluated at.
+    """
+    reactance = 2.0 * math.pi * np.asarray(frequencies) * np.asarray(capacitances)
+    return (
+        losses.dielectric_conductance(capacitances, frequencies, loss_tangent)
+        / reactance**2
+    )
+
+
 def _state_matrix(inverse, cinv, resistances):
     """Assemble [[-L^-1 R, -L^-1], [C^-1, 0]] for one loop-resistance vector."""
     return np.block(
@@ -172,12 +216,24 @@ def _border(core, drive, coupling, sigma, bus):
     return a, b
 
 
-def from_modes(modes, coupling, quality, primary_inductance, tank, bridge, bus=Bus()):
+def from_modes(
+    modes,
+    coupling,
+    quality,
+    primary_inductance,
+    tank,
+    bridge,
+    bus=Bus(),
+    loss_tangent=0.0,
+):
     """State space from top-referred modal equivalents, a primary tank and a bus.
 
     ``modes`` supplies f_m, l_m and c_m, ``coupling`` the k_m to the primary and
     ``quality`` the unloaded modal Q, from which r_m = 2 pi f_m l_m / Q_m.
     ``tank.inductance`` overrides ``primary_inductance`` when it is not None.
+    A ``loss_tangent`` is the former dielectric's, effective at the modal
+    capacitance, and damps each mode by the series resistance of
+    :func:`_dielectric_resistance`.
     """
     count = len(modes)
     l_p = primary_inductance if tank.inductance is None else tank.inductance
@@ -185,7 +241,9 @@ def from_modes(modes, coupling, quality, primary_inductance, tank, bridge, bus=B
     mutual = np.asarray(coupling) * np.sqrt(l_p * modes.l_m)
     inductances[0, 1:] = inductances[1:, 0] = mutual
     capacitances = np.concatenate(([tank.capacitance], modes.c_m))
-    modal_r = 2.0 * math.pi * modes.f * modes.l_m / np.asarray(quality)
+    dielectric = _dielectric_resistance(modes.c_m, modes.f, loss_tangent)
+    modal_r = 2.0 * math.pi * modes.f * modes.l_m / np.asarray(quality) + dielectric
+    esr = tank.esr(float(modes.f[0]))
     inverse = np.linalg.inv(inductances)
     cinv = 1.0 / capacitances
     blocked = np.zeros_like(inverse)
@@ -228,6 +286,8 @@ def from_modes(modes, coupling, quality, primary_inductance, tank, bridge, bus=B
         frequencies=np.asarray(modes.f),
         bridge=bridge,
         bus=bus,
+        esr=esr,
+        loss_tangent=loss_tangent,
     )
 
 
@@ -242,6 +302,7 @@ def from_design(design, tank, bridge, bus=Bus(), modes=2, **loss_kwargs):
         tank,
         bridge,
         bus,
+        0.0 if design.former is None else design.former.loss_tangent,
     )
 
 

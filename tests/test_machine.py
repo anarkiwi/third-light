@@ -119,3 +119,16 @@ def test_a_stiff_bus_is_the_default():
     assert not machine.bus.reservoir
     result = machine.run(5.0 / machine.frequency)
     assert np.all(result.bus_voltage == machine.driver.bus)
+
+
+def test_a_machine_reports_the_breakout_functional_of_its_electrode():
+    """The field per unit modal state is built from the same ladder as the modes."""
+    machine = small(breakout={"radius": 0.006, "height": 0.70})
+    hot = machine.breakout()
+    assert hot.field.shape == (SMALL["top_load_sections"] + 8, machine.network.modes)
+    assert 2e4 < hot.voltage < 5e5
+    assert hot.margin(np.zeros(machine.network.modes)) == 0.0
+    blunt = small().breakout()
+    assert hot.voltage < blunt.voltage
+    thin = machine.breakout(density=0.8).voltage
+    assert thin < hot.voltage

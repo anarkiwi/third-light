@@ -84,3 +84,63 @@ def test_design_rejects_unknown_top_load():
                 "top_load": {"kind": "cube", "radius": 0.1, "height": 0.5},
             }
         )
+
+
+def test_rings_slice():
+    top = Toroid(major_radius=0.15, minor_radius=0.05, height=0.6).discretise(32)
+    assert len(top[-4:]) == 4
+    assert top[-4:].a == pytest.approx(top.a[-4:])
+
+
+def test_top_loads_report_their_clearance_to_an_on_axis_point():
+    """A point inside the toroid's hole clears its tube; one inside a sphere does not."""
+    toroid = Toroid(major_radius=0.15, minor_radius=0.05, height=0.6)
+    ball = Sphere(radius=0.10, height=0.60)
+    assert toroid.clearance(Sphere(0.01, 0.60)) == pytest.approx(0.15 - 0.05 - 0.01)
+    assert toroid.clearance(Sphere(0.01, 0.75)) == pytest.approx(
+        np.hypot(0.15, 0.15) - 0.06
+    )
+    assert ball.clearance(Sphere(0.01, 0.75)) == pytest.approx(0.15 - 0.10 - 0.01)
+    assert ball.clearance(Sphere(0.01, 0.66)) < 0.0
+
+
+def test_breakout_point_joins_the_top_node_rings():
+    design = Design(
+        Solenoid(0.076, 0.5, 900, 4e-4),
+        Primary(0.1, 5, 0.01),
+        top_load=Toroid(0.15, 0.05, 0.6),
+        breakout=Sphere(0.008, 0.70),
+        top_load_sections=32,
+        breakout_sections=8,
+    )
+    assert len(design.top_load_rings()) == 40
+    assert design.top_load_curvature() == pytest.approx([0.05] * 32 + [0.008] * 8)
+    assert design.electrodes == (design.top_load, design.breakout)
+
+
+def test_a_breakout_point_inside_the_top_load_is_rejected():
+    with pytest.raises(ValueError, match="intersects the top load"):
+        Design(
+            Solenoid(0.076, 0.5, 900, 4e-4),
+            Primary(0.1, 5, 0.01),
+            top_load=Sphere(0.10, 0.60),
+            breakout=Sphere(0.008, 0.66),
+        )
+
+
+def test_breakout_point_loads_from_the_schema():
+    design = Design.from_dict(
+        {
+            "secondary": {
+                "radius": 0.1,
+                "length": 0.5,
+                "turns": 900,
+                "wire_diameter": 4e-4,
+            },
+            "primary": {"inner_radius": 0.1, "turns": 5},
+            "top_load": {"kind": "sphere", "radius": 0.1, "height": 0.7},
+            "breakout": {"radius": 0.005, "height": 0.85},
+        }
+    )
+    assert design.breakout == Sphere(radius=0.005, height=0.85)
+    assert design.top_load.curvature_radius == 0.1

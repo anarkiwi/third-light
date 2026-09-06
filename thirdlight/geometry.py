@@ -8,6 +8,7 @@ self terms of the inductance and potential-coefficient matrices.
 Coordinates are SI, with z measured from the ground plane.
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,6 +41,10 @@ class Rings:
 
     def __len__(self):
         return len(self.a)
+
+    def __getitem__(self, item):
+        """Sub-set of rings, indexed by slice or integer array."""
+        return Rings(*(getattr(self, f)[item] for f in ("a", "z", "n", "w", "rw")))
 
     @property
     def area(self):
@@ -108,6 +113,19 @@ class Toroid:
         """Radius of the outer equator."""
         return self.major_radius + self.minor_radius
 
+    @property
+    def curvature_radius(self):
+        """Radius of curvature of the surface, the tube radius."""
+        return self.minor_radius
+
+    def clearance(self, point):
+        """Gap between the tube surface and an on-axis sphere, negative if they meet."""
+        return (
+            math.hypot(self.major_radius, point.height - self.height)
+            - self.minor_radius
+            - point.radius
+        )
+
     def discretise(self, sections):
         """Rings spaced uniformly in poloidal angle over the tube surface."""
         theta = 2.0 * np.pi * (np.arange(sections) + 0.5) / sections
@@ -132,6 +150,15 @@ class Sphere:
     def outer_radius(self):
         """Equatorial radius."""
         return self.radius
+
+    @property
+    def curvature_radius(self):
+        """Radius of curvature of the surface."""
+        return self.radius
+
+    def clearance(self, point):
+        """Gap between this surface and an on-axis sphere, negative if they meet."""
+        return abs(point.height - self.height) - self.radius - point.radius
 
     def discretise(self, sections):
         """Rings spaced uniformly in polar angle."""
@@ -262,21 +289,60 @@ class Design:  # pylint: disable=too-many-instance-attributes
     secondary: Solenoid
     primary: Primary
     top_load: Toroid | Sphere | None = None
+    breakout: Sphere | None = None
     former: Former | None = None
     ground_plane: bool = True
     sections: int = 120
     top_load_sections: int = 32
+    breakout_sections: int = 8
     former_sections: int = 96
+
+    def __post_init__(self):
+        if self.breakout is None or self.top_load is None:
+            return
+        gap = self.top_load.clearance(self.breakout)
+        if gap <= 0.0:
+            raise ValueError(f"the breakout point intersects the top load by {-gap} m")
+
+    @property
+    def electrodes(self):
+        """Top-node conductors in ring order: the top load, then the breakout point."""
+        return tuple(
+            part for part in (self.top_load, self.breakout) if part is not None
+        )
 
     def secondary_rings(self):
         """Ring discretisation of the secondary winding."""
         return self.secondary.discretise(self.sections)
 
     def top_load_rings(self):
-        """Ring discretisation of the top load, empty if there is none."""
-        if self.top_load is None:
+        """Rings of the top load and breakout point, empty if there is neither.
+
+        The breakout point is a sphere at the end of a stalk; the stalk itself is
+        left out, its surface field being far below the tip's.
+        """
+        parts = [
+            part.discretise(count)
+            for part, count in (
+                (self.top_load, self.top_load_sections),
+                (self.breakout, self.breakout_sections),
+            )
+            if part is not None
+        ]
+        if not parts:
             return Rings(*(np.zeros(0) for _ in range(5)))
-        return self.top_load.discretise(self.top_load_sections)
+        return Rings.concat(*parts)
+
+    def top_load_curvature(self):
+        """Surface curvature radius of each ring of :meth:`top_load_rings`."""
+        counts = (self.top_load_sections, self.breakout_sections)
+        return np.concatenate(
+            [
+                np.full(count, part.curvature_radius)
+                for part, count in zip(self.electrodes, counts)
+            ]
+            or [np.zeros(0)]
+        )
 
     def dielectric(self):
         """Discretised boundary of the winding former, or None if there is none."""
@@ -300,6 +366,7 @@ class Design:  # pylint: disable=too-many-instance-attributes
         spec = dict(spec)
         former = spec.pop("former", None)
         top = spec.pop("top_load", None)
+        point = spec.pop("breakout", None)
         kinds = {"toroid": Toroid, "sphere": Sphere}
         if top is not None:
             top = dict(top)
@@ -311,6 +378,7 @@ class Design:  # pylint: disable=too-many-instance-attributes
             secondary=Solenoid(**spec.pop("secondary")),
             primary=Primary(**spec.pop("primary")),
             top_load=top,
+            breakout=None if point is None else Sphere(**point),
             former=None if former is None else Former(**former),
             **spec,
         )

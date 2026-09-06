@@ -18,14 +18,31 @@ from thirdlight.geometry import Rings
 
 @dataclass(frozen=True)
 class Ladder:
-    """Reduced ladder: section inductance, node capacitance and node heights."""
+    """Reduced ladder: section inductance, node capacitance and node heights.
+
+    ``charge`` is the ring charge per unit node potential, the unreduced factor
+    of C = T.T (C_rings T); the last ``top`` of its rows are the top load and
+    breakout point, whose surface field drives the discharge models.
+    """
 
     L: np.ndarray
     C: np.ndarray
     z: np.ndarray
+    rings: Rings | None = None
+    charge: np.ndarray | None = None
+    top: int = 0
 
     def __len__(self):
         return len(self.z)
+
+    @property
+    def electrode(self):
+        """Rows of ``rings`` and ``charge`` forming the top-node electrode surface.
+
+        The top load and breakout point where there are any, else the last turn
+        of the winding, which is then what the top node presents to the air.
+        """
+        return slice(len(self.rings) - (self.top or 1), None)
 
 
 @dataclass(frozen=True)
@@ -79,13 +96,18 @@ def ladder(design, sections=None):
     groups = inductance.turn_groups(len(turns), sections)
     xp = array_namespace()
     node = xp.asarray(node_map(groups, len(top)))
-    rings = capacitance.capacitance_matrix(
-        Rings.concat(turns, top), design.ground_plane, design.dielectric()
+    rings = Rings.concat(turns, top)
+    charge = (
+        capacitance.capacitance_matrix(rings, design.ground_plane, design.dielectric())
+        @ node
     )
     return Ladder(
         L=inductance.reduce_sections(inductance.inductance_matrix(turns), groups),
-        C=asnumpy(node.T @ rings @ node),
+        C=asnumpy(node.T @ charge),
         z=np.bincount(groups, weights=turns.z) / np.bincount(groups),
+        rings=rings,
+        charge=asnumpy(charge),
+        top=len(top),
     )
 
 

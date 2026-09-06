@@ -14,7 +14,7 @@ from scipy.optimize import brentq
 from thirdlight.circuit import Network, with_streamer
 from thirdlight.circuit.devices import polarity
 from thirdlight.solver.propagator import Propagator
-from thirdlight.thermal import integrate, ledger
+from thirdlight.thermal.ledger import integrate, ledger
 
 _XTOL = 1e-14
 

@@ -56,11 +56,20 @@ result.streamer_power             # channel dissipation, W
 calibration.operating_point(machine, streamer)   # cycle mean power, spark length
 ```
 
+```python
+hot = machine.temperatures(streamer)  # settled interrupter cycle, C
+hot.peak["igbt"]                      # peak junction temperature, what kills a die
+hot.mean["igbt"], hot.ripple["igbt"]  # cycle mean and the swing on top of it
+hot.peak["coil"], hot.peak["capacitor"]   # winding and tank capacitor
+hot.converged                         # false for a coil in thermal runaway
+```
+
 Implemented: EM matrices and the ladder eigen-solve, the dielectric former and
 Medhurst proximity correction, the bridge, driver and exponential integrator,
-breakout, the streamer load and its length dynamics, and switching-energy and
-component-resolved loss extraction (roadmap phases 1, 1a, 2, 3 and 4a). Junction
-thermal networks and batched GPU sweeps are not yet built.
+breakout, the streamer load and its length dynamics, switching-energy and
+component-resolved loss extraction, and the Foster/Cauer thermal networks,
+junction temperature and settled interrupter cycle that consume it (roadmap
+phases 1, 1a, 2, 3 and 4). Batched GPU sweeps are not yet built.
 
 ## Test
 

@@ -33,11 +33,13 @@ bridge:
   igbt:
     v0: 1.2
     r: 0.012
+    zth: {resistances: [0.033, 0.075, 0.09, 0.05], time_constants: [7.0e-4, 5.0e-3, 0.03, 0.2], foster: true}
     turn_on: {coefficients: [0.0, 8.0e-5, 5.0e-8], alpha: 3.0e-3, v_test: 600.0}
     turn_off: {coefficients: [0.0, 7.0e-5, 2.0e-8], alpha: 1.5e-3, v_test: 600.0}
   diode:
     v0: 1.0
     r: 0.010
+    zth: {resistances: [0.06, 0.14, 0.16, 0.09], time_constants: [7.0e-4, 5.0e-3, 0.03, 0.2], foster: true}
     recovery: {coefficients: [0.0, 5.0e-5, -3.0e-8], alpha: 5.0e-3, v_test: 600.0}
   full: true
 driver:
@@ -48,3 +50,9 @@ driver:
   interrupter:
     on_time: 150.0e-6
     frequency: 200.0
+# Module baseplate and heatsink, and the coil and tank capacitor in still air.
+thermal:
+  ambient: 25.0
+  sink: {resistances: [0.05, 0.5], capacitances: [50.0, 450.0]}
+  coil: {resistances: [0.1, 0.4], capacitances: [250.0, 120.0]}
+  capacitor: {resistances: [2.0], capacitances: [200.0]}

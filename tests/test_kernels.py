@@ -7,6 +7,7 @@ import pytest
 from scipy.optimize import brentq
 
 from test_propagator import CASES, FRACTIONS, series_rlc
+from thirdlight import backend
 from thirdlight.solver import kernels
 from thirdlight.solver.propagator import (  # pylint: disable=protected-access
     Propagator,
@@ -18,6 +19,7 @@ from thirdlight.solver.stepping import _crossing  # pylint: disable=protected-ac
 DESIGNS = 3
 SEED = 20260906
 XTOL = 1e-14
+SOURCES = [f.__name__ for f in kernels._SOURCES]  # pylint: disable=protected-access
 
 
 @pytest.fixture(name="call", params=[False, True], ids=["compiled", "interpreted"])
@@ -303,3 +305,27 @@ def test_bisect_reports_a_pinned_functional_that_never_enters_at_once(call):
     ends = (x, prop.advance(x, u, step))
     assert packed.bisect(call, 0.0, step, sign, 0.0, 0) == 0.0
     assert _crossing(prop, ends, u, (c, 0.0), step, sign) == 0.0
+
+
+def test_build_compiles_each_source_once_over_its_siblings():
+    """Every source is compiled once, in order, seeing only the ones built before it."""
+    order = []
+
+    def record(func):
+        assert func.__module__ == kernels.__name__
+        assert func.__name__ not in func.__globals__
+        assert all(name in func.__globals__ for name in order)
+        order.append(func.__name__)
+        return func
+
+    built = kernels.build(record)
+    assert order == SOURCES
+    assert sorted(built) == sorted(SOURCES)
+
+
+def test_the_device_build_constructs_without_a_gpu():
+    """The one source binds for the CUDA target with no driver present."""
+    cuda = pytest.importorskip("numba.cuda")
+    built = kernels.build(backend.device)
+    assert sorted(built) == sorted(SOURCES)
+    assert all(isinstance(f, cuda.dispatcher.CUDADispatcher) for f in built.values())

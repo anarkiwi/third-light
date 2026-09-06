@@ -283,6 +283,19 @@ Numba's CPU and CUDA targets do not share a namespace, so kernels are
 dispatched per backend and only the library-level linear algebra is
 namespace-generic.
 
+"One source" is a build rather than a decorator, because device code cannot call
+an `@njit` dispatcher: compiling a device function that calls one, or that calls
+another device function by dispatcher reference, fails before typing. The kernel
+bodies are therefore left undecorated and call their siblings by bare name, and a
+builder rebinds each onto a namespace carrying that target's siblings compiled so
+far, so a target's call tree closes over itself. The CPU build keeps its on-disk
+cache through the rebinding, which matters because the batched kernel costs 38 s
+to compile cold and 7.7 s warm; the rebound functions must carry the module's own
+`__name__` and `__file__` for that, or the first run writes a cache the next one
+cannot load. The handful of names with no common spelling are bound the same way:
+`nextafter` is NumPy's on the CPU and libdevice's on the GPU, neither being
+callable from the other's target.
+
 Precision: float64 for matrix assembly, inversion and eigen-solve; float32
 optional for stepping, gated by a conservation-of-energy check on a lossless test
 circuit. P conditioning is benign — cond(P) grows linearly at about 3.3 per ring,
@@ -561,6 +574,15 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Design-schema round trip | `from_dict(to_dict(d))` against the design, over every component shape | exact |
 | Labelled run output | every dataset and frame series against the `Result` property it names | exact |
 | Plot content | every artist's data against the array it stands for | exact |
+| Sweep expansion | the axis product and order, and the frame's own unstacked cube | exact |
+| Sweep observables | each against the built network it is read back off | exact |
+| Objective | the machine built by hand at the same point; a rejected point is a wall | exact |
+| Batched stepper | every design's observables and final state against `simulate` | 1e-9, lands at 1e-12 |
+| Batched interval count | the intervals each design takes, against `simulate`'s own | exact |
+| Batched burst edges | the analytic edge index against `Interrupter.edges` | exact |
+| Batched packing | every design the model does not carry rejected, by cause | exact |
+| Per-target build | each kernel compiled once, in dependency order, seeing its own siblings | exact |
+| Device build | every kernel of the CUDA build constructs, which needs no device | exact |
 
 ## 6. Engineering constraints
 
@@ -610,7 +632,27 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    mapping describes. JavaTC import moves to phase 6: it is a browser-form tool
    whose saved format no public source documents, and a parser guessed at it
    could not be validated against anything.
-5. Batched GPU sweeps and optimisation front end.
+5a. Design-space expansion, the sweep runner and the optimiser glue. Done. An
+   axis moves the geometry the modes come out of, so every point rebuilds the
+   machine, where the drive sweep of §3.4a reuses the one network it was built
+   with; the sweep frame is indexed by its axes, so it unstacks into a labelled
+   cube for nothing. Infeasibility is part of a design space rather than an
+   error: a breakout point inside the top load and rings overlapping until P is
+   indefinite are alike a NaN row, and a wall an optimiser walks away from. The
+   objective is a plain callable over a vector, which is all either scipy or
+   Optuna needs, so neither is imported.
+5b. Batched stepping: a design space packed design-major and stepped by one
+   kernel with no Python in the interval loop. Done, on both targets. What the
+   batched model does not carry is rejected at pack time rather than
+   approximated: a streamer, whose channel capacitance re-levels mid-run and
+   rebuilds the propagators; a caller's load callback; a MIDI schedule, which is
+   array data where a plain interrupter is four scalars; and any switch state
+   whose propagator fell back to Pade, which has no eigenbasis to pack. What no
+   machine without a GPU can check is checked anyway: the CPU build, through the
+   identical per-target mechanism of §3.3, reproduces `simulate` bit for bit and
+   to 1e-12 against its observables, and every kernel of the device build
+   constructs. What is left to the `cuda` job is the PTX compile and the launch,
+   since compiling a device call tree needs a driver.
 6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
 
 ## 8. Existing tools surveyed

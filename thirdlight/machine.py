@@ -13,7 +13,7 @@ import yaml
 from thirdlight import secondary
 from thirdlight.circuit import Bridge, Bus, Network, Switch, Tank, from_modes, tune
 from thirdlight.control import Driver, Interrupter, Melody, PhaseLead, Ramp
-from thirdlight.discharge import Streamer, breakout
+from thirdlight.discharge import Streamer, TreeChannel, breakout
 from thirdlight.em import inductance, losses
 from thirdlight.geometry import Design
 from thirdlight.solver.stepping import simulate
@@ -101,7 +101,27 @@ class Machine:  # pylint: disable=too-many-instance-attributes
             breakout=self.breakout(**air), frequency=self.frequency, **kwargs
         )
 
-    def run(self, duration, step=None, load=None, x0=None, streamer=None, length0=0.0):
+    def channel(self, growth, **kwargs):
+        """Tree-backed channel model for this machine; see :mod:`thirdlight.discharge.channel`.
+
+        Keyword arguments go to :class:`~thirdlight.discharge.TreeChannel`; those
+        naming air conditions go to :meth:`breakout`.
+        """
+        air = {k: kwargs.pop(k) for k in ("density", "surface") if k in kwargs}
+        return TreeChannel.from_design(
+            self.design, self.breakout(**air), self.frequency, growth, **kwargs
+        )
+
+    def run(
+        self,
+        duration,
+        step=None,
+        load=None,
+        x0=None,
+        streamer=None,
+        length0=0.0,
+        rng=None,
+    ):
         """Simulate ``duration`` seconds, defaulting to :attr:`step`."""
         return simulate(
             self.network,
@@ -112,6 +132,7 @@ class Machine:  # pylint: disable=too-many-instance-attributes
             x0,
             streamer,
             length0,
+            rng,
         )
 
     @classmethod

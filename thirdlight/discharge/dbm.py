@@ -135,6 +135,10 @@ class BorderedCholesky:
         self._size += 1
         return True
 
+    def truncate(self, size):
+        """Drop the trailing rows and columns beyond ``size``; the prefix is its own factor."""
+        self._size = min(self._size, size)
+
     def solve(self, b):
         """Solve ``P x = b`` through the maintained factor."""
         factor = self.factor
@@ -177,6 +181,7 @@ class Discharge:  # pylint: disable=too-many-instance-attributes
         self.bodies = tuple(bodies)
         self.ground = ground
         self.rng = rng
+        self._capacity = steps
         self._nodes = np.empty((steps + 1, 3))
         self._nodes[0] = seed
         self._parent = np.full(steps + 1, -1)
@@ -212,9 +217,19 @@ class Discharge:  # pylint: disable=too-many-instance-attributes
         return self._factor.factor
 
     @property
+    def nodes(self):
+        """Node positions grown so far, as an (n, 3) view."""
+        return self._nodes[: self._count]
+
+    @property
     def sites(self):
         """Live candidate positions."""
         return self._sites
+
+    @property
+    def roots(self):
+        """Node each live candidate hangs off."""
+        return self._roots
 
     @property
     def _length(self):
@@ -262,20 +277,50 @@ class Discharge:  # pylint: disable=too-many-instance-attributes
         self._roots = self._roots[mask]
         self._coefficients = self._coefficients[mask]
 
+    def charges(self, source=None):
+        """Source charges at the potentials ``source``, unit potential everywhere by default."""
+        if source is None:
+            source = np.ones(len(self._factor))
+        return self._factor.solve(source)
+
+    def potentials(self, charges):
+        """Potential at every live candidate from a source charge vector."""
+        return self._coefficients @ charges
+
     def fields(self):
         """Mean field each live candidate would be crossed at, per unit channel potential."""
-        charges = self._factor.solve(np.ones(len(self._factor)))
-        return (1.0 - self._coefficients @ charges) / self.growth.step
+        return (1.0 - self.potentials(self.charges())) / self.growth.step
 
-    def step(self):
+    def prune(self, count):
+        """Drop the node suffix beyond ``count``, keeping every parent before its child.
+
+        Growth appends, so the survivors are a prefix of the factor as well as of
+        the tree: the factor truncates, the pool loses the candidates its own
+        node no longer exists at and the columns of the dropped segments, and
+        nothing is refactorised or recomputed.
+        """
+        count = min(max(count, 1), self._count)
+        if count == self._count:
+            return
+        self._count, self._segments = count, count - 1
+        self._factor.truncate(len(self.rings) + self._segments)
+        self._keep(self._roots < count)
+        self._coefficients = self._coefficients[:, : len(self.rings) + self._segments]
+
+    def step(self, field=None, critical=None):
         """Grow one segment; return False when nothing is left above the critical field.
 
         A candidate whose channel would interpenetrate another leaves the mixed
         system indefinite, which is the exact statement that the model cannot
-        carry it, so it is dropped and another drawn.
+        carry it, so it is dropped and another drawn. ``field`` and ``critical``
+        override the unit-potential field and :attr:`Growth.critical` where the
+        channel is not an equipotential, in whatever units the caller works in.
         """
-        field = self.fields()
-        live = np.flatnonzero(field >= self.growth.critical)
+        if self._segments >= self._capacity:
+            return False
+        field = self.fields() if field is None else field
+        critical = self.growth.critical if critical is None else critical
+        live = np.flatnonzero(field >= critical)
         while live.size:
             weight = (field[live] / field[live].max()) ** self.growth.eta
             chosen = live[self.rng.choice(live.size, p=weight / weight.sum())]
@@ -283,7 +328,7 @@ class Discharge:  # pylint: disable=too-many-instance-attributes
                 return True
             self._keep(np.arange(field.size) != chosen)
             field = np.delete(field, chosen)
-            live = np.flatnonzero(field >= self.growth.critical)
+            live = np.flatnonzero(field >= critical)
         return False
 
     def _extend(self, parent, site):

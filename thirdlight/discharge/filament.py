@@ -119,6 +119,15 @@ def _assemble_mixed(a, z, mid, ground):
 
 
 @numba.njit(cache=True)
+def _path_sums(parent, element):
+    """Forward prefix-add of ``element`` along parents: O(n) root-to-node sums."""
+    out = element.copy()
+    for k in range(1, out.shape[0]):
+        out[k] += out[parent[k]]
+    return out
+
+
+@numba.njit(cache=True)
 def _subtree_sums(parent, q):
     """Reverse scatter-add of ``q`` onto parents: O(n) subtree sums, root total in slot 0."""
     out = q.copy()
@@ -236,6 +245,21 @@ def subtree_charges(tree, charges):
     return _subtree_sums(np.ascontiguousarray(tree.parent, dtype=np.int64), padded)[1:]
 
 
+def segment_resistance(tree, resistivity):
+    """Ohmic resistance of each segment, rho L / A over the channel cross section."""
+    return resistivity * tree.lengths / (math.pi * tree.radius**2)
+
+
+def path_resistance(tree, resistivity):
+    """Root-to-node resistance of every node, in ohm, in one forward pass.
+
+    The mirror of :func:`subtree_charges`: parents precede children, so the
+    ancestor sums are a prefix scan over segments and no path is ever walked.
+    """
+    element = np.concatenate(([0.0], segment_resistance(tree, resistivity)))
+    return _path_sums(np.ascontiguousarray(tree.parent, dtype=np.int64), element)
+
+
 def series_resistance(tree, charges, resistivity):
     """Series resistance dissipating the tree's own charging-current power, in ohm.
 
@@ -244,8 +268,7 @@ def series_resistance(tree, charges, resistivity):
     sum_k R_k (q_k / Q)^2 with q_k the subtree charge and Q the tree's total.
     """
     share = subtree_charges(tree, charges) / np.sum(charges)
-    element = resistivity * tree.lengths / (math.pi * tree.radius**2)
-    return float(element @ share**2)
+    return float(segment_resistance(tree, resistivity) @ share**2)
 
 
 def channel_load(rings, tree, resistivity, ground_plane=True):

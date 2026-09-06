@@ -6,7 +6,7 @@ the sign conventions are §3.2 of docs/design.md.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -58,6 +58,7 @@ class Network:  # pylint: disable=too-many-instance-attributes
     frequencies: np.ndarray
     bridge: Bridge
     bus: Bus
+    streamer: tuple | None = None
 
     @property
     def size(self):
@@ -98,13 +99,32 @@ class Network:  # pylint: disable=too-many-instance-attributes
 
     def bus_voltage(self, x, supply):
         """Bus voltage: the reservoir state if there is one, else the supply itself."""
-        return np.asarray(x)[..., -1] if self.bus.reservoir else supply
+        return np.asarray(x)[..., 2 * self.loops] if self.bus.reservoir else supply
+
+    def streamer_voltage(self, x):
+        """Voltage on the streamer channel capacitance, zero without a streamer."""
+        if self.streamer is None:
+            return np.zeros(np.shape(x)[:-1])
+        return np.asarray(x)[..., -1]
+
+    def streamer_current(self, x):
+        """Current drawn from the top node by the streamer branch, A."""
+        if self.streamer is None:
+            return np.zeros(np.shape(x)[:-1])
+        return (self.top_voltage(x) - self.streamer_voltage(x)) / self.streamer[0]
 
     def energy(self, x):
-        """Stored energy (1/2) i L i + (1/2) sum_j C_j v_j^2, the bus excluded."""
+        """Stored energy (1/2) i L i + (1/2) sum_j C_j v_j^2, the bus excluded.
+
+        The streamer's channel capacitance is included where there is one, so the
+        ledger closes against the branch's own dissipation.
+        """
         i, v = self.currents(x), self.voltages(x)
         magnetic = np.einsum("...i,ij,...j->...", i, self.inductances, i)
-        return 0.5 * (magnetic + (self.capacitances * v * v).sum(axis=-1))
+        stored = (self.capacitances * v * v).sum(axis=-1)
+        if self.streamer is not None:
+            stored = stored + self.streamer[1] * self.streamer_voltage(x) ** 2
+        return 0.5 * (magnetic + stored)
 
     def state(self, gate, current):
         """Conduction state ``(kind, polarity sigma, current sign)``."""
@@ -223,6 +243,35 @@ def from_design(design, tank, bridge, bus=Bus(), modes=2, **loss_kwargs):
         bridge,
         bus,
     )
+
+
+def with_streamer(network, resistance, capacitance):
+    """Network with a Fritz streamer branch, R in series with C, on the top node.
+
+    The branch is a state rather than a held current injection. Its time constant
+    R C falls below the step as the channel shortens, so an injection would be
+    both inaccurate and unstable there, and the damping it applies to the modes
+    would depend on the step -- which is exactly the quantity a spark-length fit
+    reads. As one more row of the piecewise-linear state space it is exact at any
+    length, and C moves slowly enough that the propagators are rebuilt only when
+    it has drifted a set fraction.
+
+    A current out of the top node forces every mode identically, so the branch
+    enters each modal row as -i_s / c_m with i_s = (sum_j v_j - v_s) / R.
+    """
+    size = network.a.shape[-1]
+    rows = np.arange(network.loops + 1, 2 * network.loops)
+    a = np.zeros((len(network.a), size + 1, size + 1))
+    a[:, :size, :size] = network.a
+    b = np.zeros((len(network.b), size + 1, network.b.shape[-1]))
+    b[:, :size] = network.b
+    gain = 1.0 / (resistance * network.capacitances[1:])
+    a[:, rows[:, None], rows] -= gain[:, None]
+    a[:, rows, size] += gain
+    rate = 1.0 / (resistance * capacitance)
+    a[:, size, rows] = rate
+    a[:, size, size] = -rate
+    return replace(network, a=a, b=b, streamer=(resistance, capacitance))
 
 
 def tune(primary_inductance, frequency, ratio=1.0):

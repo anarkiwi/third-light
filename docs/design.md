@@ -34,9 +34,9 @@ detailed plasma chemistry.
 | Driver/control | Primary current transformer feedback, phase-lead (UD2.x style), comparator + gate delay, interrupter (pulse width, PRF, MIDI note → PRF), QCW bus ramp or phase-shift modulation | Ward [12], Loneoceans [13], Kaizer [14], Burnett [15] |
 | Streamer load | Fritz lumped model: R_s ≈ 220 kΩ in series with ~1–2 pF per foot of streamer, length ℓ(t) evolves with top voltage and per-bang energy; QCW channel persistence | Fritz [8], Freau law [16] |
 | Breakout/corona | Surface field from the MoM solve; onset via Peek-type critical field with surface factor | Peek [17] |
-| Streamer geometry (phase 3) | Dielectric breakdown model, growth probability ∝ φ^η, fast Laplacian growth on GPU; segment charges feed back into C matrix | NPW [18], Kim et al. [19] |
+| Streamer geometry (phase 6) | Dielectric breakdown model, growth probability ∝ φ^η, fast Laplacian growth on GPU; segment charges feed back into C matrix | NPW [18], Kim et al. [19] |
 | Semiconductor thermal | E_on(I,Tj), E_off(I,Tj), E_rr polynomial fits from datasheet; conduction ∫Vce·I dt; Cauer RC junction→case→sink→ambient | [20], [21] |
-| Acoustics (phase 3) | Spark pulse train at interrupter PRF; SPL proxy from energy per bang | Teraguchi [22] |
+| Acoustics (phase 6) | Spark pulse train at interrupter PRF; SPL proxy from energy per bang | Teraguchi [22] |
 
 ## 3. Numerical core
 
@@ -178,7 +178,10 @@ path holds 1e-12, so a state that falls back wants the energy-normalised scaling
 Both ends of the sub-step are exact: Φ(0) = I and Γ(0) = 0 are returned as such
 rather than reconstructed, because the event locator brackets a functional
 against the value it started from and a switching instant pins that value to
-zero.
+zero. A functional standing on that zero and leaving it in the direction the new
+conduction state admits is not crossing, though: the crossing due is the one it
+comes back to, so the locator brackets past the departure. Reporting the instant
+it is standing on returns a zero-length step, and the run then loops on it.
 
 Which devices conduct is a complementarity problem, not a schedule. Both bridge
 polarities present the same network to the tank, so only three linear circuits
@@ -190,10 +193,20 @@ taken when the loop equation it implies gives a di_p/dt of that same sign, so th
 diode dead zone at |v_loop| < n_dev V0 and the reverse conduction driven by the
 modes' induced EMF both fall out rather than being cased on.
 
-Nonlinear branches (streamer, saturating Vce, corona) enter as current
-injections evaluated from x_n with their own small explicit ODE. The streamer
-R_sC_s time constant (≈ 0.4 µs) is well above h, so the explicit coupling is
-stable; a single fixed-point corrector is available for stiff settings.
+Nonlinear branches (saturating Vce, corona) enter as current injections
+evaluated from x_n with their own small explicit ODE, and the input column
+u[1] carries any load the caller supplies. The streamer is not one of them.
+Its R_s C_s is 0.7 µs at a metre but 0.3 ns at the length where the branch first
+matters, so a held injection would be unstable exactly where a channel starts,
+and the damping it applies to the modes would depend on h — which is the very
+quantity a spark-length fit reads. It is one more row of the state space
+instead, and C_s, which moves on the bang timescale rather than the RF one, is
+quantised geometrically: the propagators are rebuilt when it has drifted 2 %, a
+few hundred times in a bang against 10^4 steps, and quartering the quantisation
+moves the settled length by 4e-4. Charge is what carries across a level change
+while the channel grows, and voltage while it cools and takes the charge of the
+recombined part away with it; both directions release energy, so a change can
+never create any.
 
 Slow inputs (QCW bus ramp, MIDI PRF schedule) are zero-order-held per step.
 
@@ -261,14 +274,62 @@ point mounted over a coil the corrected coarse pole field lands within 0.02 % of
 the refined solution, against 10.6 % low without it. A toroid's bands are all
 slender and need nothing.
 
-Per bang: breakout when the electrode surface field exceeds the Peek
-threshold; while broken out, ℓ grows at a rate proportional to the excess of
-top voltage over the channel-sustaining voltage, decays between bangs with a
-channel-cooling time constant that decreases with PRF. Load is Fritz
-R_s + C_s(ℓ) on the top node. The two constants (growth gain, cooling time)
-are the only fitted parameters and are fitted once against the published
-DRSSTC and QCW spark-length datasets and Freau's law for SGTC. Phase 3
-replaces the ℓ scalar with the DBM tree and derives C_s from segment charges.
+Per bang: a channel starts when the electrode surface field reaches the Peek
+threshold, and once one exists its own tip carries the field, so growth then
+continues on the top voltage alone. ℓ grows at a rate proportional to the excess
+of that voltage over the gradient E ℓ the channel needs to sustain itself, and
+decays with a channel-cooling time constant, so the PRF dependence is what the
+duty cycle leaves rather than a parameter of its own. Both regimes of (|v| − Eℓ)+
+are linear, so a step is one exponential rather than a sub-stepped integration.
+The load is Fritz R_s + C_s(ℓ) on the top node, carried as a state of the
+piecewise-linear system rather than as an injection, for the reasons in §3.2.
+Phase 6 replaces the ℓ scalar with the DBM tree and derives C_s from segment
+charges.
+
+### 3.4a Phase-3 residuals, and what the published data does and does not pin
+
+No coiler source states a spark-length law. Freau's 1.7 in/√P [16] is a
+spark-gap result, and it appears in JavaTC's documentation in that context;
+Ward's design guide [12] and Kaizer's [14] carry no spark-length formula at all.
+What the builders do publish is coils: input power and measured spark length
+together, from which k = L/√P is 1.2 to 2.1 in/√W across the DRSSTCs that
+publish both [12], [13], [14], with two systematic caveats. Ward's figures are
+wattmeter readings at the outlet, on a coil he separately measured at 0.64 power
+factor, while Kaizer's and Slawinski's are V·I products, so part of the spread is
+watts against VA. And the small coils saturate against their own winding length:
+Ward puts racing sparks at about three times it, and the coils furthest below the
+band are the ones nearest that limit.
+
+Within one coil the law is steeper than √P. Ward's DRSSTC-0.5 table [12], the one
+published set that varies power at fixed geometry over a useful range, runs
+0.254 m at 33 W to 0.457 m at 180 W: an exponent of 0.341, with k falling 1.74 to
+1.34. This model's sweep of the example machine predicts 0.270, and its own k
+falls 2.03 to 1.19 over 194 W to 2.0 kW, so every point from 194 W to 1.3 kW lies
+inside the published band, and the 2.0 kW point lies just under it at a spark 2.7
+times the winding length, where a real coil of that size would be racing. Nothing
+in the length dynamics puts that exponent there: it comes out of the circuit,
+where the channel's own loading holds the top voltage back as the bus rises.
+
+The two constants §3.4 nominates as the fitted ones are not the ones that matter.
+A DRSSTC bang is long enough for the channel to reach the length its top voltage
+sustains, so the model is ceiling limited at V/E: raising the growth gain 7.5x
+moves the settled length by 5 %, quadrupling the cooling time moves it by 4 %,
+and a least-squares fit against the band pushes both to their bounds without
+improving the residual. Both are therefore set at their physical scales — the
+gain at a channel velocity of 2.8e5 m/s at 700 kV, inside the published leader
+range, the cooling time at the channel's own 0.5 ms — and the constant that sets
+the answer is the sustaining gradient, which is not fitted. At the 5 kV/cm of a
+cold positive streamer the model runs a factor of two short of every measured
+coil; at the 1.5 to 3 kV/cm coilers measure across long Tesla sparks, whose
+channels are thermalised leaders rather than cold streamers, it lands in the
+band. 2 kV/cm is the value used.
+
+One double count is known and left standing: Fritz's 220 kΩ is the channel's own
+resistance, so i R_s already accounts for part of the gradient along it and the
+E ℓ term accounts for it again. At the operating point the two are comparable,
+which is one reason the gradient that lands in the band sits below the cold
+streamer value. Phase 6 removes the question by growing the channel
+geometrically instead.
 
 ## 4. Package layout
 
@@ -315,11 +376,17 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Lumped 4th-order DRSSTC transient | every constant-mode interval against `scipy.integrate.solve_ivp` DOP853 at rtol 1e-13 | 1e-9 rel |
 | Complete energy transfer | de Queiroz integer mode ratios [5]; achievable only when n - m is odd, so (3,2) and (5,4), not (5,3) | 1e-6 of the initial energy |
 | Phase-lead/ZCS behaviour | gate edges on the current zero crossings with no delay; tau = tan(omega t_d)/omega restores them | 5 % of the gate delay |
-| Spark length vs power | Freau law (SGTC) [16]; published DRSSTC/QCW data [13], [14] | within data spread |
 | Winding AC resistance | Butterworth's Tables I and II [27] for the uncorrected model | 5e-4 |
 | Winding AC resistance | Medhurst's Table VIII over every measured d/s and l/D [9] | 1e-3 |
 | Unloaded secondary Q | Denicolai measured 326 at 65.6 kHz [1]; Kaizer tabulations [14] | within the published band |
 | IGBT loss | datasheet curves; PLECS/PSIM published examples [20] | 5 % |
+| Event locator | a functional leaving its own zero crosses half a period on | 1e-9 rel |
+| Streamer length ODE | `solve_ivp` DOP853, both regimes of (|v| - E l)+ | 1e-9 rel |
+| Streamer branch | `solve_ivp` DOP853 on the augmented state space | 1e-9 rel |
+| Streamer branch equations | dv_m/dt = (i_m - i_s)/c_m per mode, dv_s/dt = i_s/C_s | 1e-12 rel |
+| Burst energy ledger | bus energy in against dissipation and storage | 1e-4, first order in h |
+| Channel capacitance levels | settled length against 10x finer quantisation | 5e-3 |
+| Spark length vs power | published DRSSTC k = 1.2..2.1 in/sqrt(W) [12], [13], [14] | inside the band, §3.4a |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 | Bus reservoir | first-order charging against its own R_s C_bus; energy traded with the circuit exactly | 1e-8, 1e-9 |
@@ -348,7 +415,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    Done, with `solve_ivp` in place of ngspice as the independent reference: it
    needs no optional native dependency in CI and is checked on every interval
    rather than on one waveform.
-3. Streamer load and length dynamics, breakout, spark-length calibration.
+3. Streamer load and length dynamics, breakout, spark-length calibration. Done;
+   the residuals and what the published data pins are in §3.4a.
 4. Thermal and loss models. The QCW bus ramp and the MIDI interrupter came
    with the driver in phase 2, so what is left here is the thermal side.
 5. Batched GPU sweeps and optimisation front end.

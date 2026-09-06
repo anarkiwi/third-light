@@ -6,5 +6,12 @@ from thirdlight.discharge.breakout import (
     from_modes,
     relative_density,
 )
+from thirdlight.discharge.streamer import Streamer
 
-__all__ = ["Breakout", "critical_field", "from_modes", "relative_density"]
+__all__ = [
+    "Breakout",
+    "Streamer",
+    "critical_field",
+    "from_modes",
+    "relative_density",
+]

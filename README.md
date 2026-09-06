@@ -36,10 +36,21 @@ result.primary_current         # A, sampled at every step and switching instant
 result.top_voltage             # V
 ```
 
+```python
+from thirdlight.discharge import calibration
+
+machine.breakout().voltage        # top voltage that breaks the electrode out, V
+streamer = machine.streamer()     # Fritz channel load, calibrated constants
+result = machine.run(200e-6, streamer=streamer)
+result.length                     # streamer length, m, per sample
+result.streamer_power             # channel dissipation, W
+calibration.operating_point(machine, streamer)   # cycle mean power, spark length
+```
+
 Implemented: EM matrices and the ladder eigen-solve, the dielectric former and
-Medhurst proximity correction, and the bridge, driver and exponential integrator
-(roadmap phases 1, 1a and 2). Streamer, thermal and batched GPU sweeps are not
-yet built.
+Medhurst proximity correction, the bridge, driver and exponential integrator, and
+breakout, the streamer load and its length dynamics (roadmap phases 1, 1a, 2 and
+3). Thermal models and batched GPU sweeps are not yet built.
 
 ## Test
 

@@ -60,4 +60,9 @@ are resolved against the first secondary mode at load time.
 | `driver.interrupter.frequency` | bursts per second |
 | `driver.interrupter.notes` | in place of `frequency`: `[[start, duration, midi note], ...]` |
 
+The streamer is not part of the schema. It is built from a loaded machine by
+`thirdlight.machine.Machine.streamer()`, which carries the calibrated constants
+of `thirdlight.discharge.streamer` and needs the driven frequency the machine
+already knows; keyword arguments override any of them.
+
 See `examples/` for complete designs.

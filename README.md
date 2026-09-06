@@ -98,6 +98,18 @@ calibration.operating_point(machine, streamer)   # cycle mean power, spark lengt
 ```
 
 ```python
+from thirdlight.pair import Pair
+
+towers = Pair(design, other, separation=1.2)   # centre to centre, m
+towers.frequencies, towers.detune   # the two isolated f1, and their fractional detune
+towers.mutual                       # mutual capacitance between the towers, F
+towers.coupling                     # c_mutual / c_self, the fractional splitting
+towers.split.f                      # the two coupled-mode frequencies, Hz
+towers.locks                        # modes shared between the towers, not localised
+towers.bridges(reach, other_reach)  # antiphase drive spans towers.gap
+```
+
+```python
 from thirdlight import acoustics
 
 audio = acoustics.render(result, machine.driver.interrupter, 2.0)  # Pa at 1 m, 48 kHz
@@ -118,8 +130,9 @@ breakout, the streamer load and its length dynamics, switching-energy and
 component-resolved loss extraction, the Foster/Cauer thermal networks,
 junction temperature and settled interrupter cycle that consume it, and the
 schema round trip, labelled output, plots, design-space sweeps and the optimiser
-glue, the batched stepper on both targets, and the thermoacoustic spark audio
-(roadmap phases 1, 1a, 2, 3, 4, 5 and the acoustics of 6). The rest of phase 6 --
+glue, the batched stepper on both targets, the thermoacoustic spark audio, and
+the side-by-side pair with its mutual capacitance and coupled modes (roadmap
+phases 1, 1a, 2, 3, 4, 5, 7 and the acoustics of 6). The rest of phase 6 --
 DBM streamer geometry, JavaTC import and 3D visualisation -- is not built.
 
 ## Test

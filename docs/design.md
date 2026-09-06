@@ -175,6 +175,25 @@ the composed Padé path sheds three digits to cancellation where the diagonalise
 path holds 1e-12, so a state that falls back wants the energy-normalised scaling
 `secondary.py` already applies to the modes.
 
+A crossing search evaluates one functional at many sub-steps of an interval
+whose state and held input do not move, so the state's coordinates in the
+eigenbasis and the functional's row against it are constant across the search:
+y = V^-1 x and w = c^T V are formed once and every trial after that is a
+diagonal scaling and a dot, O(n) against the O(n^2) of propagating the state and
+then taking the functional of it. On the CPU that is worth about 1 %, because the
+loop is interpreter bound rather than matvec bound: a 5.7x larger state costs
+only 21 % more time, so the flops the reformulation removes were never what the
+run was spending. It is the whole inner cost of the batched kernel of §3.3
+instead, where there is no interpreter.
+
+The bracket a functional standing on its own zero needs is noise limited at the
+bottom. Its value at a small s is reconstructed from terms of the size of the
+state, so the cancellation that leaves it near zero floors its relative accuracy,
+and below the s at which the true value falls under that floor a search can enter
+spuriously and report a crossing there rather than none at all. That costs
+nothing in the case the bracket exists for, where the state part of the
+functional is exactly zero because a commutation pinned i_p to it.
+
 Both ends of the sub-step are exact: Φ(0) = I and Γ(0) = 0 are returned as such
 rather than reconstructed, because the event locator brackets a functional
 against the value it started from and a switching instant pins that value to
@@ -223,15 +242,31 @@ Two paths, same algorithm:
 
 * Single design, full ladder (n ≈ 2N+8 ≈ 800): CuPy dense matvec per step;
   memory-bound, ~1 ms of coil time per second of GPU time at 300 kHz.
-* Batch of B designs, modal model (n ≤ 32): one warp per design, one lane
-  per state row, matvec by warp-shuffle reduction, per-design event handling
-  without divergence across warps. The per-design eigenbasis for S ≈ 4 switch
-  states is 2·S·n² complex64 = 64 KB — far over the shared-memory budget, so it
-  stays in global memory and streams through L1/L2, with only the state vector
-  and the S·n eigenvalues resident per warp. B = 10^4 designs is then 0.64 GB
-  of basis, which sets the practical batch size; wider sweeps are chunked. The
-  tabulated-propagator alternative would need 2.9 GB for the same batch and
-  would not fit. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
+* Batch of B designs, modal model (n ≤ 32): one thread per design, with the
+  design indexing the last axis of every packed array, so the threads of a warp
+  read consecutive addresses of the same matrix element and every load
+  coalesces. The per-design eigenbasis for S = 5 switch states is 2·S·n²
+  complex64 = 80 KB — far over any shared-memory budget, so it stays in global
+  memory and streams through L1/L2, with only the state vector and the S·n
+  eigenvalues resident per design. B = 10^4 designs is then 0.8 GB of basis,
+  which sets the practical batch size; wider sweeps are chunked. The
+  tabulated-propagator alternative would need several times that and would not
+  fit. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
+
+  An earlier draft put one warp on each design and one lane on each state row,
+  reducing the matvec by warp shuffle, in order to coalesce those basis reads.
+  Two things retired it. The event locator of §3.2 works in eigen coordinates,
+  so the basis is touched twice per interval rather than once per bisection
+  trial, and the traffic the warp layout existed to smooth is no longer the
+  inner cost. And a design-major layout coalesces just as well with one thread
+  per design, wastes no lanes on a state shorter than a warp, and needs no
+  shuffle — which is what lets the CPU and CUDA paths compile from one source,
+  so the CPU path validates the exact algorithm the GPU runs. With no GPU in CI
+  that verifiability decides it.
+
+  Complex data is carried as separate real and imaginary float arrays rather
+  than a complex dtype. The same source then runs in float64 or float32 for the
+  precision gate below, and asks neither compiler for complex support.
 
 Thermal states use their own exact-exponential update between bursts, because
 their time constants are 10^3–10^6 times the electrical ones. Per-burst energies

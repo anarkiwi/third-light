@@ -424,6 +424,85 @@ q_k need no path walk and no ancestor matrix: growth appends nodes, so every
 parent has a lower index than its child and one reverse scatter-add over
 segments accumulates every subtree sum in O(n).
 
+### 3.4c Dielectric breakdown growth of the tree
+
+The tree is grown rather than prescribed, by the Niemeyer-Pietronero-Wiesmann
+model [18] solved the way [19] does it. Electrode and channel are one conductor
+set at unit potential, so §3.4b's mixed solve already carries every source
+charge and the potential anywhere else is their superposition: there is no
+lattice, and no grid Laplace solve per step, which is the whole reason the
+filament operator exists. Each node offers candidate sites one step h away along
+a Fibonacci spiral over a forward cone about its own segment direction — the
+compact deterministic quasi-uniform set, containing the axis itself so that a
+channel under a dominant field goes straight on rather than zig-zagging between
+two tied neighbours — and the root uses the seed direction. One dense
+matrix-vector product of the candidate-to-source coefficients against the charge
+vector gives the potential at every candidate at once.
+
+Three rejections define what a site may be. Below the ground plane or inside the
+electrode is geometry. Within one step of an existing node is the off-lattice
+form of a lattice site being occupied once, and it is not optional: with the
+channel radius as the exclusion instead, a cluster packs fifty times denser than
+its own step and no dimension it produces means anything. A channel core may not
+cross the grounded plane either, where its own image would cancel its self term.
+The mean field driving a step is (V − φ)/h at unit channel potential, and a
+candidate below the critical propagation field cannot break down: that is what
+terminates growth, and it is the geometric replacement for §3.4a's E ℓ
+sustaining gradient. Among the admissible, probability goes as field^η, with η
+[18]'s own exponent and not fitted; the weights are formed relative to the
+largest field, which is the same distribution and does not overflow at large η.
+
+The incremental factor is what makes the model usable. Refactorising the
+(rings + segments) system each step is O(n³) per step and O(n⁴) over a growth,
+which is unusable at any interesting size. Growth appends, so a segment appends
+a row and column at the end of the matrix and no permutation is needed: bordering
+[[P, b], [bᵀ, d]] leaves the old Cholesky factor untouched, and the new row is
+one triangular solve L c = b and one square root √(d − c·c). That is O(n²) per
+step, O(n³) over the growth, and BLAS-2 throughout, with the factor living in a
+buffer sized for the whole growth so that no append reallocates. It is exact,
+not approximate, and §5 checks it against a dense `scipy.linalg.cholesky` of the
+assembled matrix at several points through a growth: the assembly's point
+matching is not reciprocal, so the border is taken with the field at the
+lower-indexed midpoint exactly as the dense assembly takes it. The candidate pool
+is maintained the same way, one new column of coefficients per segment and one
+block of rows per node, so no coefficient is recomputed and no pool rebuilt; a
+step costs O(n) kernel evaluations against the O(n²) of the factor. Where two
+channels would interpenetrate the bordered matrix comes out indefinite, which is
+the exact statement that the model cannot carry that segment, so the candidate is
+dropped and another drawn rather than screened by a geometric threshold.
+
+This estimator does not resolve D against published values at sizes reachable in
+a test budget, and that is stated rather than worked around. Measured by
+R_g ~ N^(1/D) over one cluster's own growth, the reading in space rises with the
+cluster: η = 0 goes 3.20, 3.63, 3.70 over 300, 600 and 800 segments and η = 1
+goes 2.74, 2.98, 3.02, all three seeds each. Both sit at or above the embedding
+dimension, which is impossible asymptotically, so the absolute number is a
+finite-size reading and not a dimension.
+
+Three candidate calibrations were tried against that and none holds. The η = 0
+limit is not one: its reading moves with N as fast as anything it would correct,
+so the implied factor is 0.94 at 300 segments and 0.81 at 800, and any η = 1
+value derived through it moves with it. It is not a calibration in principle
+either — `Growth.cone` is a forward hemisphere about each node's own direction,
+which is a forward-biased branching tree and not isotropic Eden growth, and
+nothing forces its dimension to the embedding dimension. Opening the cone to the
+full sphere, which is genuinely isotropic, does not rescue it: η = 0 then reads
+3.39, 3.63, 3.62 over the same sizes, no nearer 3 and no better converged. And
+the planar restriction cannot discriminate η at all: over six seeds at 600
+segments η = 0 reads 2.234 ± 0.142 and η = 1 reads 2.262 ± 0.147, indistinguishable
+and in the wrong order, so nothing about [18]'s 1.75 can be said either way from
+it. The planar mode is kept because the needle limit is measured in it.
+
+What survives is the ordering [18] pins, and §5 checks that and nothing more:
+in space D falls with η, 3.12 > 2.45 > 1.73 over η = 0, 3 and 6 at 300 segments
+and five seeds each, a separation of five to six standard errors that holds at
+every size measured and widens with N. Branching count does not carry the
+ordering — the fork fraction is 0.29, 0.28, 0.24 across those same η, inside its
+own spread — so it is not claimed. The other end is sharp: at large η growth
+collapses to one channel, a fork per thirty segments and D → 1.08. Resolving the
+absolute dimension needs clusters an order of magnitude larger than a 60 s test,
+and is an open residual of the same kind as §3.4a's.
+
 ### 3.5 Loss extraction
 
 Conduction loss is already in the state space and comes back out of it by
@@ -652,6 +731,12 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Straight channel refinement | its own value at twice the segment count | 1e-2, lands at 1.3e-3 |
 | Series resistance reduction | sum R_k for a chain charged at its tip; R_t + R_b/2 for a symmetric fork | 1e-12 rel |
 | Subtree charges | a naive per-node ancestor walk on a random tree | exact |
+| Incremental bordered factor | `scipy.linalg.cholesky` of the assembled mixed matrix, through a growth | 1e-10 rel, lands at 9e-15 |
+| Growth dimension vs eta | D falls with eta [18]; eta = 0, 3, 6 in space, five seeds each | the ordering only, 3.12 > 2.45 > 1.73; absolute D unresolved, 3.4c |
+| Needle limit, eta large | unbranched, D -> 1 | one fork per 30 segments, D = 1.08 |
+| Grown tree structure | parents precede children, above ground, outside the electrode, every segment one step | exact, 1e-15 on the length |
+| Growth termination | the step cap at zero critical field; a short tree above it; none above the electrode's own | exact |
+| Grown channel load | `channel_load` against segment count | capacitance rising, series resistance positive |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 | Foster step response | its own closed form Zth(t) = sum R (1 - exp(-t/tau)) | 1e-12 rel |

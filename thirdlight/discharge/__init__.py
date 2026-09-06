@@ -6,15 +6,20 @@ from thirdlight.discharge.breakout import (
     from_modes,
     relative_density,
 )
+from thirdlight.discharge.dbm import Discharge, Growth, fractal_dimension, grow
 from thirdlight.discharge.filament import Tree, channel_load
 from thirdlight.discharge.streamer import Streamer
 
 __all__ = [
     "Breakout",
+    "Discharge",
+    "Growth",
     "Streamer",
     "Tree",
     "channel_load",
     "critical_field",
+    "fractal_dimension",
     "from_modes",
+    "grow",
     "relative_density",
 ]

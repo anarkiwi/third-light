@@ -17,6 +17,9 @@ top_load:
   major_radius: 0.152
   minor_radius: 0.0508
   height: 0.60
+breakout:
+  radius: 0.006
+  height: 0.665
 ground_plane: true
 sections: 160
 top_load_sections: 32

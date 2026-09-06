@@ -8,6 +8,7 @@ from thirdlight.circuit.network import (
     from_design,
     from_modes,
     tune,
+    with_streamer,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "from_design",
     "from_modes",
     "tune",
+    "with_streamer",
 ]

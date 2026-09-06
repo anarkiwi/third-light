@@ -10,7 +10,8 @@ from thirdlight.circuit import IGBT, OPEN, Bridge, Bus, Switch, Tank, from_modes
 from thirdlight.circuit.devices import index as state_index
 from thirdlight.control import Driver, Interrupter, PhaseLead, Ramp
 from thirdlight.secondary import Modes
-from thirdlight.solver import simulate
+from thirdlight.solver import Propagator, simulate
+from thirdlight.solver.stepping import _crossing  # pylint: disable=protected-access
 
 V_BUS = 340.0
 IGBT_STATES = (state_index(IGBT, 1.0), state_index(IGBT, -1.0))
@@ -284,3 +285,26 @@ def test_a_stiff_bus_is_the_limit_of_a_large_reservoir():
         stiff.primary_current[-1], rel=1e-4
     )
     assert large.bus_voltage[-1] == pytest.approx(V_BUS, rel=1e-5)
+
+
+def test_a_functional_leaving_its_own_zero_crosses_later_not_now():
+    """After commutation the current sits on zero and leaves it admissibly.
+
+    Reporting that instant as the crossing would leave the step unable to
+    advance, and the run would loop on it forever.
+    """
+    omega = 2.0 * math.pi
+    a = np.array([[0.0, 1.0], [-(omega**2), 0.0]])
+    b = np.zeros((2, 1))
+    span = 0.75
+    prop = Propagator.build(a, b, span)
+    start = np.array([0.0, 1.0])
+    ends = (start, prop.advance(start, [0.0], span))
+    functional = (np.array([1.0, 0.0]), 0.0)
+    assert _crossing(prop, ends, [0.0], functional, span, 1.0) == pytest.approx(
+        0.5, rel=1e-9
+    )
+    # Leaving the zero against the sign is a crossing now.
+    quarter = Propagator.build(a, b, 0.25)
+    ends = (-start, quarter.advance(-start, [0.0], 0.25))
+    assert _crossing(quarter, ends, [0.0], functional, 0.25, 1.0) == 0.0

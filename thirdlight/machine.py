@@ -13,7 +13,7 @@ import yaml
 from thirdlight import secondary
 from thirdlight.circuit import Bridge, Bus, Network, Switch, Tank, from_modes, tune
 from thirdlight.control import Driver, Interrupter, Melody, PhaseLead, Ramp
-from thirdlight.discharge import breakout
+from thirdlight.discharge import Streamer, breakout
 from thirdlight.em import inductance, losses
 from thirdlight.geometry import Design
 from thirdlight.solver.stepping import simulate
@@ -78,10 +78,29 @@ class Machine:  # pylint: disable=too-many-instance-attributes
         """Nominal integration step, a fixed fraction of the driven period."""
         return 1.0 / (STEPS_PER_CYCLE * self.frequency)
 
-    def run(self, duration, step=None, load=None, x0=None):
+    def streamer(self, **kwargs):
+        """Fritz streamer load for this machine, breaking out at the driven frequency.
+
+        Keyword arguments override the calibrated constants of
+        :class:`~thirdlight.discharge.Streamer`; those naming air conditions go
+        to :meth:`breakout`.
+        """
+        air = {k: kwargs.pop(k) for k in ("density", "surface") if k in kwargs}
+        return Streamer(
+            breakout=self.breakout(**air), frequency=self.frequency, **kwargs
+        )
+
+    def run(self, duration, step=None, load=None, x0=None, streamer=None, length0=0.0):
         """Simulate ``duration`` seconds, defaulting to :attr:`step`."""
         return simulate(
-            self.network, self.driver, duration, step or self.step, load, x0
+            self.network,
+            self.driver,
+            duration,
+            step or self.step,
+            load,
+            x0,
+            streamer,
+            length0,
         )
 
     @classmethod

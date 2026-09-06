@@ -31,6 +31,29 @@ def integrate(t, weight, values, sums=False):
     return float((0.5 * (left + right) * np.diff(t)).sum())
 
 
+def branch_energies(t, drop, top, resistance, capacitance):
+    """Energy the series R-C branch dissipates over each interval, in J.
+
+    The branch is one first-order state whose R C falls below the step where the
+    channel is short, and a trapezoid of its power cannot resolve the relaxation
+    that follows a change of branch. Its own dynamics are integrated instead,
+    with the top voltage linear across the interval as every other weight in the
+    ledger is held across it; see §3.5.
+    """
+    span = np.diff(t)
+    ohmic, tau = resistance[:-1], resistance[:-1] * capacitance[:-1]
+    live = span > 0.0
+    slope = np.divide(np.diff(top), span, out=np.zeros_like(span), where=live)
+    x = np.divide(span, tau, out=np.zeros_like(span), where=live & (tau > 0.0))
+    steady = slope * tau
+    transient = drop[:-1] - steady
+    return (
+        steady**2 * span
+        - 2.0 * steady * transient * tau * np.expm1(-x)
+        - 0.5 * transient**2 * tau * np.expm1(-2.0 * x)
+    ) / ohmic
+
+
 @dataclass(frozen=True)
 class Switching:
     """Switching energy attributed to each commutation of a run, J.
@@ -172,7 +195,7 @@ def ledger(result, tj=None):
             [integrate(t, modal[:, m] - dielectric[m], square[:, m + 1]) for m in modes]
         ),
         former=sum(integrate(t, dielectric[m], square[:, m + 1]) for m in modes),
-        channel=integrate(t, None, result.streamer_power)
+        channel=float(result.channel_energies.sum())
         + float(result.loss[-1] - result.loss[0]),
         switching=switching(result, tj),
     )

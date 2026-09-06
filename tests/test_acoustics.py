@@ -51,6 +51,12 @@ class Pulse:
     t: np.ndarray
     streamer_power: np.ndarray
 
+    @property
+    def channel_energies(self):
+        """Interval energies of the sampled power, which is what a run carries."""
+        power = self.streamer_power
+        return 0.5 * (power[:-1] + power[1:]) * np.diff(self.t)
+
 
 def pulse(rate=RATE):
     """The Gaussian power pulse sampled on the audio grid itself."""

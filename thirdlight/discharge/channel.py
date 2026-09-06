@@ -103,12 +103,22 @@ class TreeChannel:  # pylint: disable=too-many-instance-attributes
 
     @property
     def minimum(self):
-        """Capacitance below which the branch is immaterial, and where it is held, F.
+        """Capacitance the branch is held at while it is immaterial, F.
 
-        The scalar model's own floor: below ``floor`` of the branch's own 1 / R
-        the channel neither loads nor detunes the top node.
+        The scalar model's own floor, at the nominal resistance the held branch
+        is built with, which is the origin of the capacitance ladder above it.
         """
         return self.floor / (2.0 * math.pi * self.frequency * self.resistance)
+
+    def admittance(self, resistance, capacitance):
+        """Branch admittance as a fraction of its own 1 / R, omega R C.
+
+        The floor is a statement about the branch, so it is taken against the
+        resistance the branch is actually built at rather than a nominal one:
+        below ``floor`` of that the channel neither loads nor detunes the top
+        node, and is held.
+        """
+        return 2.0 * math.pi * self.frequency * resistance * capacitance
 
     def initial(self, seed=0.0, rng=None):
         """Channel state a run starts from: a state carries over, a length seeds the reach.
@@ -137,6 +147,10 @@ class TreeChannel:  # pylint: disable=too-many-instance-attributes
     def level(self, state):
         """Quantised capacitance level of a state, geometric in ``tolerance``."""
         return self._measure(state)[0]
+
+    def branch(self, state):
+        """Added capacitance in F and series resistance in ohm of a state's own tree."""
+        return self._measure(state)[1:]
 
     def capacitance_at(self, level):
         """Channel capacitance of a quantised level, F."""
@@ -212,22 +226,30 @@ class TreeChannel:  # pylint: disable=too-many-instance-attributes
         return (node[discharge.roots] - potential) / self.growth.step
 
     def _measure(self, state):
-        """Level, added capacitance and series resistance of a state, cached per change."""
+        """Level, added capacitance and series resistance of a state, cached per change.
+
+        The channel is held at the floor until its own omega R C reaches
+        ``floor``; the ladder above that is geometric in the capacitance, which
+        is what a level has to determine.
+        """
         if state.measure is None:
             tree, count = state.tree, len(self.rings)
             charges = state.discharge.charges()
             added = max(float(charges.sum()) - self._bare, 0.0)
-            level = (
-                0
-                if added <= self.minimum
-                else round(math.log(added / self.minimum) / math.log1p(self.tolerance))
-            )
             ohmic = (
                 self.resistance
                 if tree.segments == 0
                 else series_resistance(tree, charges[count:], self.resistivity)
             )
-            self._resistance.setdefault(level, ohmic)
+            level = (
+                0
+                if self.admittance(ohmic, added) <= self.floor
+                else max(
+                    round(math.log(added / self.minimum) / math.log1p(self.tolerance)),
+                    0,
+                )
+            )
+            self._resistance.setdefault(level, ohmic if level else self.resistance)
             state.measure = (level, added, ohmic)
         return state.measure
 

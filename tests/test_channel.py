@@ -6,6 +6,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 import yaml
+from scipy.integrate import solve_ivp
 
 from thirdlight.discharge import Growth, Tree
 from thirdlight.discharge.channel import State, TreeChannel
@@ -17,6 +18,7 @@ from thirdlight.discharge.filament import (
 )
 from thirdlight.discharge.streamer import GROWTH_GAIN
 from thirdlight.machine import Machine
+from thirdlight.thermal.ledger import branch_energies
 from thirdlight.solver.stepping import _Channel
 
 with open("examples/drsstc.yaml", encoding="utf-8") as _handle:
@@ -112,7 +114,12 @@ class Legacy:  # pylint: disable=unused-argument
 
 
 def test_the_scalar_model_runs_bit_identically_through_the_generalised_seam():
-    """The generalised seam asks the scalar model only what the old one did."""
+    """The generalised seam asks the scalar model only what the old one did.
+
+    ``dissipation`` and the ledger beside it are the run's own quadrature rather
+    than its physics, and 3.5's channel term is deliberately not the one it was;
+    every series, the observables and the final state are.
+    """
     machine = small()
     streamer = machine.streamer(growth=2.0, cooling=2e-5)
     new = machine.run(6e-6, streamer=streamer, length0=0.05)
@@ -305,25 +312,90 @@ def test_a_coupled_bang_grows_a_tree_that_stays_valid_throughout():
     assert np.all(np.abs(state.tree.lengths - model.growth.step) < 1e-12)
 
 
-@pytest.mark.parametrize("divisor,tol", [(1, 4e-2), (4, 1.2e-2)])
+@pytest.mark.parametrize("divisor,tol", [(1, 1e-4), (4, 1e-5)])
 def test_the_energy_ledger_closes_around_the_grown_channel(divisor, tol):
     """Bus energy in equals dissipation plus storage, the channel included.
 
-    The branch relaxes faster than a step where the channel is short, so the
-    trapezoid resolves the level changes only to first order; see 3.4d.
+    Driven hard enough that the branch is material for most of the run, which is
+    the only regime in which this says anything.
     """
-    machine = small()
+    machine = small(bus=1.0e5)
+    model = channel(machine)
     result = machine.run(
         6e-6,
         step=machine.step / divisor,
-        streamer=channel(machine),
+        streamer=model,
         rng=np.random.default_rng(0),
     )
+    admittance = model.admittance(result.resistance, result.channel)
+    assert admittance.max() > 10.0 * model.floor
+    assert np.mean(admittance > model.floor) > 0.2
     stored = result.energy[-1] - result.energy[0]
     residual = result.input_energy - result.dissipation - stored
     assert abs(residual) < tol * abs(result.input_energy)
     assert np.all(np.diff(result.loss) >= 0.0)
     assert result.losses().total == pytest.approx(result.dissipation, rel=1e-12)
+
+
+def test_the_branch_energy_is_the_exact_integral_of_its_own_relaxation():
+    """One interval of the branch against its own ODE, stiff and slack alike."""
+    span, v0, v1, capacitance = 4.0e-9, 3.0e5, 2.6e5, 2.0e-13
+
+    def reference(resistance, drop):
+        tau = resistance * capacitance
+        slope = (v1 - v0) / span
+
+        def field(t, y):
+            return [
+                (v0 + slope * t - y[0]) / tau,
+                (v0 + slope * t - y[0]) ** 2 / resistance,
+            ]
+
+        return solve_ivp(
+            field,
+            (0.0, span),
+            [v0 - drop, 0.0],
+            method="DOP853",
+            rtol=1e-12,
+            atol=1e-18,
+        ).y[1, -1]
+
+    for resistance in (2.2e5, 2.2e3, 2.2e1):
+        for drop in (0.0, 1.0e5):
+            energy = branch_energies(
+                np.array([0.0, span]),
+                np.array([drop, 0.0]),
+                np.array([v0, v1]),
+                np.full(2, resistance),
+                np.full(2, capacitance),
+            )
+            assert float(energy[0]) == pytest.approx(
+                reference(resistance, drop), rel=1e-9
+            )
+
+
+def test_the_branch_is_held_until_its_own_admittance_reaches_the_floor():
+    """The floor is omega R C of the branch itself, not of a nominal resistance."""
+    machine = small()
+    model = channel(machine, cooling=1.0e3)
+    voltage = 3.0e5
+    state = model.initial(0.0)
+    seen = []
+    for _ in range(8):
+        model.advance(
+            state, voltage, 1.0, model.growth.step / (model.velocity * voltage)
+        )
+        capacitance, resistance = model.branch(state)
+        material = model.admittance(resistance, capacitance) > model.floor
+        seen.append(material)
+        assert (model.level(state) > 0) == material
+        assert model.capacitance_at(model.level(state)) == pytest.approx(
+            capacitance if material else model.minimum, rel=0.5 * model.tolerance
+        )
+        assert model.resistance_at(model.level(state)) == (
+            resistance if material else model.resistance
+        )
+    assert any(seen) and not all(seen)
 
 
 def test_growth_stops_at_the_critical_field_and_at_the_buffer_it_was_sized_for():

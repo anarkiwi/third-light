@@ -14,7 +14,7 @@ from scipy.optimize import brentq
 from thirdlight.circuit import Network, with_streamer
 from thirdlight.circuit.devices import polarity
 from thirdlight.solver.propagator import Propagator
-from thirdlight.thermal.ledger import integrate, ledger
+from thirdlight.thermal.ledger import branch_energies, integrate, ledger
 
 _XTOL = 1e-14
 
@@ -97,6 +97,21 @@ class Result:  # pylint: disable=too-many-instance-attributes
         return ohmic * self.streamer_current**2
 
     @property
+    def channel_energies(self):
+        """Energy the channel resistance dissipates over each interval, J.
+
+        Exact for the branch's own first-order dynamics rather than a trapezoid
+        of its power, which cannot resolve a branch faster than the step; see
+        §3.5. A run whose branch was never built falls back to the trapezoid.
+        """
+        power = np.asarray(self.streamer_power, dtype=float)
+        if self.network.streamer is None or self.resistance is None:
+            return 0.5 * (power[:-1] + power[1:]) * np.diff(self.t)
+        top = self.network.top_voltage(self.x)
+        drop = top - self.network.streamer_voltage(self.x)
+        return branch_energies(self.t, drop, top, self.resistance, self.channel)
+
+    @property
     def _swing(self):
         """Bridge output voltage before the device drop, held over each interval, V."""
         return polarity(self.state) * self.network.bridge.gain * self.bus_voltage
@@ -122,13 +137,14 @@ class Result:  # pylint: disable=too-many-instance-attributes
         Every weight -- which devices conduct, which bridge polarity stands
         across the tank -- is held over the interval that follows the sample it
         was recorded at, so the integrand is trapezoidal within an interval and
-        discontinuous only between them.
+        discontinuous only between them. The channel is the exception, and is
+        integrated exactly; see :attr:`channel_energies`.
         """
         i = self.network.currents(self.x)
         ohmic = self.network.resistances[self.state]
         loops = integrate(self.t, ohmic[:-1], i * i, sums=True)
         devices = integrate(self.t, -self.u[:, 0], self.primary_current)
-        channel = integrate(self.t, None, self.streamer_power)
+        channel = float(self.channel_energies.sum())
         return loops + devices + channel + float(self.loss[-1] - self.loss[0])
 
 

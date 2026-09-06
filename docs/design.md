@@ -36,7 +36,7 @@ detailed plasma chemistry.
 | Breakout/corona | Surface field from the MoM solve; onset via Peek-type critical field with surface factor | Peek [17] |
 | Streamer geometry (phase 6) | Dielectric breakdown model, growth probability ∝ φ^η, fast Laplacian growth on GPU; segment charges feed back into C matrix | NPW [18], Kim et al. [19] |
 | Semiconductor thermal | E_on(I,Tj), E_off(I,Tj), E_rr polynomial fits from datasheet; conduction ∫Vce·I dt; Foster or Cauer rungs from junction to case to sink to ambient, exact-exponential between bursts | [20], [21] |
-| Acoustics (phase 6) | Spark pulse train at interrupter PRF; SPL proxy from energy per bang | Teraguchi [22] |
+| Acoustics | Thermoacoustic simple source: the far-field pressure is the time derivative of the channel dissipation, delayed and 1/r | Teraguchi [22] |
 
 ## 3. Numerical core
 
@@ -536,6 +536,44 @@ here -- [20], whose switching example §3.5 does reproduce, stops at total devic
 loss and publishes no Zth rungs -- so every check in §5 is analytic or
 self-consistent, and none of it is fitted.
 
+### 3.7 Spark acoustics
+
+A spark channel is a heat release in air, and in linear acoustics that is a
+volume source and nothing else. Heat at rate P into a gas of ratio gamma at
+ambient p0 displaces V = (gamma - 1) E / (gamma p0) with E the integral of P --
+the constant-pressure expansion of an ideal gas, (gamma - 1) / gamma of the heat
+doing the work p0 dV and the rest raising the internal energy -- and a simple
+source of volume V radiates p = rho0 Vddot(t - r/c) / (4 pi r). With
+c^2 = gamma p0 / rho0 the two collapse to
+
+    p(r, t) = (gamma - 1) Pdot(t - r/c) / (4 pi c^2 r)
+
+so the radiated pressure is the time derivative of the channel dissipation §3.5
+already carries, delayed by the propagation time and falling as 1/r. Ambient air
+and the run's own `streamer_power` are the only inputs; there is no constant left
+in it to fit.
+
+The run is event-stepped, so the source is resampled onto the audio grid through
+its own energy: each sample is the mean power over the interval it covers, taken
+as the difference of the energy interpolated at the sample edges. That energy is
+§3.5's own trapezoid, so the resampling creates no heat and loses none, and the
+mean is a boxcar whose nulls sit at every multiple of the sample rate, which is
+what keeps the carrier ripple at twice the resonant frequency -- ultrasound, and
+absorbed within centimetres of the channel -- from folding into the band rather
+than being decimated out of it. What survives is the burst envelope, which the
+grid resolves. Pdot is then a centred difference of that, the composite stencil
+(P_k+2 + 2 P_k+1 - 2 P_k-1 - P_k-2) / 8h, which deviates from the derivative by
+5 h^2 P'''(t) / 12: local and second order, where a spectral derivative would
+impose on a burst a periodicity it has not got.
+
+A MIDI program is 10^4 bangs, so the placement of them is one scatter-add and not
+a loop. The burst starts are the schedule's own edges that leave the gate enabled
+-- the array §3.2 already synchronises on -- their offsets are rint(t * rate),
+and the whole train is one `bincount` of the signature broadcast over every
+offset at once. A fixed PRF then puts the spectrum exactly on the PRF comb and a
+`Melody` puts each note span on its own, which is what §5 checks. Output is
+normalised 16-bit mono PCM through the standard library's `wave`.
+
 ## 4. Package layout
 
 ```
@@ -552,6 +590,7 @@ thirdlight/
   thermal/         loss extraction; Foster and Cauer networks, junction temperature
   solver/          expm precompute, event stepping, CUDA and CPU kernels
   batch.py         design-space expansion, sweep runner, Optuna/scipy objective glue
+  acoustics.py     thermoacoustic simple source, burst rendering, WAV output
   io/              YAML design schema round trip, xarray/parquet output
   viz/             waveform, mode-shape, field and streamer plots
 ```
@@ -632,6 +671,16 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Batched packing | every design the model does not carry rejected, by cause | exact |
 | Per-target build | each kernel compiled once, in dependency order, seeing its own siblings | exact |
 | Device build | every kernel of the CUDA build constructs, which needs no device | exact |
+| Thermoacoustic volume | the ideal gas heated at constant pressure, m R dT / p0 | 1e-12 rel |
+| Inverse distance, retarded time | half the pressure at twice the range; the arrival shifted by r/c on the grid | 1e-12 rel; exact |
+| Radiated pressure | the closed-form composite stencil of the resampling and the centred difference, for a Gaussian pulse | 1e-12 of the terms it differences |
+| Differentiation truncation | its own leading 5 h^2 P'''/12 against the analytic derivative | 2 %, lands at 0.03 % |
+| Source resampling | the audio samples' own sum against the ledger's channel integral | 1e-12 rel |
+| Radiated acoustic energy | 2 pi^1.5 K^2 A^2 / (rho0 c s), the sphere integral of p^2 / (rho0 c) for a Gaussian pulse | 1.25 (h/s)^2, lands at 5.4e-4 |
+| Burst spectrum | the DFT of an exact number of PRF periods is the PRF comb | off-comb below 1e-12 of it, lands at 7e-17 |
+| Melody pitch | each note span's dominant bin against `note_frequency` | exact |
+| Burst placement | the scatter-add against a per-burst loop, interrupter and melody | 1e-12 rel |
+| Spark WAV | the samples read back through `wave` against the normalised waveform | the int16 step |
 
 ## 6. Engineering constraints
 

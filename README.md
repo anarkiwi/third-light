@@ -98,6 +98,13 @@ calibration.operating_point(machine, streamer)   # cycle mean power, spark lengt
 ```
 
 ```python
+from thirdlight import acoustics
+
+audio = acoustics.render(result, machine.driver.interrupter, 2.0)  # Pa at 1 m, 48 kHz
+acoustics.write_wav("spark.wav", audio)   # normalised 16-bit mono
+```
+
+```python
 hot = machine.temperatures(streamer)  # settled interrupter cycle, C
 hot.peak["igbt"]                      # peak junction temperature, what kills a die
 hot.mean["igbt"], hot.ripple["igbt"]  # cycle mean and the swing on top of it
@@ -111,9 +118,9 @@ breakout, the streamer load and its length dynamics, switching-energy and
 component-resolved loss extraction, the Foster/Cauer thermal networks,
 junction temperature and settled interrupter cycle that consume it, and the
 schema round trip, labelled output, plots, design-space sweeps and the optimiser
-glue, and the batched stepper on both targets (roadmap phases 1, 1a, 2, 3, 4 and
-5). Phase 6 -- DBM streamer geometry, acoustics, JavaTC import and 3D
-visualisation -- is not built.
+glue, the batched stepper on both targets, and the thermoacoustic spark audio
+(roadmap phases 1, 1a, 2, 3, 4, 5 and the acoustics of 6). The rest of phase 6 --
+DBM streamer geometry, JavaTC import and 3D visualisation -- is not built.
 
 ## Test
 

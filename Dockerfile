@@ -7,6 +7,8 @@ WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
 RUN mkdir -p thirdlight && touch thirdlight/__init__.py \
     && pip install --no-cache-dir ".[dev]"
+# matplotlib writes a font cache; $HOME is not writable in the test stages.
+ENV MPLCONFIGDIR=/tmp/matplotlib
 
 FROM deps AS cpu
 COPY . /src
@@ -34,5 +36,5 @@ RUN mkdir -p thirdlight && touch thirdlight/__init__.py \
     && pip install --no-cache-dir ".[dev,cuda]"
 COPY . /src
 RUN pip install --no-cache-dir --no-deps -e .
-ENV THIRDLIGHT_BACKEND=cuda
+ENV THIRDLIGHT_BACKEND=cuda MPLCONFIGDIR=/tmp/matplotlib
 CMD ["pytest"]

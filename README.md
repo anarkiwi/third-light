@@ -10,6 +10,9 @@ pip install -e ".[dev]"          # CPU
 pip install -e ".[dev,cuda]"     # + CuPy, CUDA 12
 ```
 
+Extras: `io` (xarray, pandas, pyarrow) for labelled output, `viz` (matplotlib)
+for plots; `dev` carries both.
+
 Backend selection: `THIRDLIGHT_BACKEND=cuda|cpu`, default auto.
 
 ## Use
@@ -46,6 +49,21 @@ losses.switching.total            # commutation energy, additive to it
 ```
 
 ```python
+from thirdlight import io, viz
+
+io.to_dict(design)                    # design back to the YAML schema, defaults omitted
+io.dump(design, "design.yaml")
+io.to_dataset(result)                 # xarray Dataset over time and mode
+io.to_frame(result)                   # the same, flat and indexed by time
+io.to_parquet(result, "run.parquet")
+
+viz.waveforms(result)                 # primary current and top voltage
+viz.mode_shapes(modes)                # modal voltage profiles along the coil
+viz.losses(result.losses())           # component energy ledger
+viz.temperatures(hot)                 # settled cycle, mean and swing
+```
+
+```python
 from thirdlight.discharge import calibration
 
 machine.breakout().voltage        # top voltage that breaks the electrode out, V
@@ -67,9 +85,10 @@ hot.converged                         # false for a coil in thermal runaway
 Implemented: EM matrices and the ladder eigen-solve, the dielectric former and
 Medhurst proximity correction, the bridge, driver and exponential integrator,
 breakout, the streamer load and its length dynamics, switching-energy and
-component-resolved loss extraction, and the Foster/Cauer thermal networks,
-junction temperature and settled interrupter cycle that consume it (roadmap
-phases 1, 1a, 2, 3 and 4). Batched GPU sweeps are not yet built.
+component-resolved loss extraction, the Foster/Cauer thermal networks,
+junction temperature and settled interrupter cycle that consume it, and the
+schema round trip, labelled output and plots (roadmap phases 1, 1a, 2, 3 and 4).
+Batched GPU sweeps are not yet built.
 
 ## Test
 

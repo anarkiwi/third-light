@@ -465,7 +465,7 @@ thirdlight/
   thermal/         loss extraction; Foster and Cauer networks, junction temperature
   solver/          expm precompute, event stepping, CUDA and CPU kernels
   batch.py         design-space expansion, sweep runner, Optuna/scipy objective glue
-  io/              YAML design schema, JavaTC import, xarray/parquet output
+  io/              YAML design schema round trip, xarray/parquet output
   viz/             waveform, mode-shape, field and streamer plots
 ```
 
@@ -523,6 +523,9 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Window energies | the windows of a run against the ledger of the whole | 1e-12 rel |
 | Temperature feedback | the fixed point reached from ambient and from 200 C | 1 % |
 | Bus reservoir | first-order charging against its own R_s C_bus; energy traded with the circuit exactly | 1e-8, 1e-9 |
+| Design-schema round trip | `from_dict(to_dict(d))` against the design, over every component shape | exact |
+| Labelled run output | every dataset and frame series against the `Result` property it names | exact |
+| Plot content | every artist's data against the array it stands for | exact |
 
 ## 6. Engineering constraints
 
@@ -565,6 +568,13 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    secant on its own residual. No published worked example of a junction
    temperature was cleanly reproducible, so its validation is analytic and
    self-consistent throughout.
+4c. Design-schema round trip, labelled xarray/parquet output of a run, and the
+   plotting layer. Done. A sweep varies the spec mapping and records the variant,
+   so what round trips is the design rather than a built machine, which has
+   already resolved its tuning and its phase lead and carries a network no
+   mapping describes. JavaTC import moves to phase 6: it is a browser-form tool
+   whose saved format no public source documents, and a parser guessed at it
+   could not be validated against anything.
 5. Batched GPU sweeps and optimisation front end.
 6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
 

@@ -381,6 +381,45 @@ which is one reason the gradient that lands in the band sits below the cold
 streamer value. Phase 6 removes the question by growing the channel
 geometrically instead.
 
+### 3.4b Filament electrostatics of the discharge tree
+
+The channel is a set of straight segments, each carrying its total charge spread
+uniformly along it, so its potential is the closed form
+ln((R1 + R2 + L)/(R1 + R2 − L)) / (4 π ε0 L) in the distances to the two
+endpoints. The symmetric form is used rather than the projection form because
+nothing in it cancels away from the wire. The singular diagonal is the same
+expression on the wire surface at the segment midpoint, where R1 = R2;
+rationalising its denominator gives the algebraically identical
+2 ln((√(L² + 4 r_w²) + L) / (2 r_w)) / (4 π ε0 L), which holds full precision at
+any aspect ratio where the difference form loses ten digits at r_w/L = 1e−5, and
+which tends to 2 ln(L/r_w) with no special case. Ground is the image segment of
+opposite charge, exactly as it is the image ring for the rings.
+
+The tree and the electrode share one potential coefficient matrix ordered
+[rings, segments]. The ring-ring block is §3.1's own, unchanged; the
+segment-segment block is the filament kernel point matched at segment midpoints;
+and the ring-segment block needs nothing new, because the ring potential is
+axisymmetric and depends on a three-dimensional field point only through
+(hypot(x, y), z). The Green's function is reciprocal, so one triangle and one
+off-diagonal block are evaluated and the rest is their transpose, which leaves
+the matrix symmetric and Cholesky-solvable like the ring matrix alone.
+
+Holding every ring and every segment at unit potential — the tree is an
+equipotential for the electrostatic problem, the drop along it being the
+reduction below — the total charge is the loaded system's capacitance, and the
+channel's contribution is what it adds, C(rings + tree) − C(rings). That is what
+replaces Fritz's 1 pF/ft, a per-unit-length constant that knows nothing about
+the electrode the channel hangs off; a 1 m channel on the example toroid comes
+out at twice it.
+
+The resistance comes from the same charges rather than from a lumped 220 kΩ.
+Segment k has R_k = ρ L_k / A over the channel cross section and carries the
+charging current of everything at and below it, so the series resistance
+dissipating that distribution's power is Σ_k R_k (q_k/Q)². The subtree charges
+q_k need no path walk and no ancestor matrix: growth appends nodes, so every
+parent has a lower index than its child and one reverse scatter-add over
+segments accumulates every subtree sum in O(n).
+
 ### 3.5 Loss extraction
 
 Conduction loss is already in the state space and comes back out of it by
@@ -558,6 +597,16 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Burst energy ledger | bus energy in against dissipation and storage | 1e-4, first order in h |
 | Channel capacitance levels | settled length against 10x finer quantisation | 5e-3 |
 | Spark length vs power | published DRSSTC k = 1.2..2.1 in/sqrt(W) [12], [13], [14] | inside the band, §3.4a |
+| Filament potential | `scipy.integrate.quad` of the point-charge integral along the segment | 1e-10 rel, lands at 4e-16 |
+| Distant filament | the point charge 1/(4 pi eps0 d), second order in L/d | 4.2e-4, 4.2e-6, 4.2e-8 at d/L = 10, 100, 1000 |
+| Filament self term | 2 ln(L / rw) in the thin-wire limit | (rw/L)^2 rel |
+| Mixed ring/segment matrix | its own transpose | 1e-12 rel, exact by construction |
+| Filament image | zero potential on the z = 0 plane | 1e-12 rel, exact |
+| Closed polygon of filaments | thin-torus closed form, second order in 1/N | error quartered per doubling, 2.2e-4 at N = 128 |
+| Straight channel capacitance | prolate spheroid closed form | 10 %, the cylinder-spheroid shape difference; lands at 5.1 % |
+| Straight channel refinement | its own value at twice the segment count | 1e-2, lands at 1.3e-3 |
+| Series resistance reduction | sum R_k for a chain charged at its tip; R_t + R_b/2 for a symmetric fork | 1e-12 rel |
+| Subtree charges | a naive per-node ancestor walk on a random tree | exact |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 | Foster step response | its own closed form Zth(t) = sum R (1 - exp(-t/tau)) | 1e-12 rel |

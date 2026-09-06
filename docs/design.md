@@ -504,6 +504,78 @@ collapses to one channel, a fork per thirty segments and D → 1.08. Resolving t
 absolute dimension needs clusters an order of magnitude larger than a 60 s test,
 and is an open residual of the same kind as §3.4a's.
 
+### 3.4d The grown tree as a channel model on the solver
+
+The stepper asked the streamer for a level, a capacitance and a length, and took
+its resistance from a constant beside them. It now asks a channel model for the
+same things about a state it does not own: `initial` makes the state, `advance`
+carries it over one interval, `level` quantises it, `capacitance_at` and
+`resistance_at` size the branch of that level, and `extent` is the scalar spark
+length the result records. The scalar model answers all six about a float and
+its own constants -- `resistance_at` returns Fritz's 220 kΩ at any level -- so a
+run driven by it is bit for bit the run it was before, which §5 pins against the
+model's own methods rather than against recorded numbers. What the branch was
+built at is now recorded per sample beside its capacitance, since a grown
+channel's resistance moves with it.
+
+Growth is clocked rather than stepped. The DBM adds one segment per step and the
+circuit advances in time, so a segment of length h takes h / v at the leader
+velocity v; §3.4a already fixes that scale, its channel velocity of 2.8e5 m/s at
+700 kV, which is the growth gain 0.4 m/s per volt the scalar model carries and
+not a new constant. The fractional segment left over is carried between circuit
+steps, so the mean rate is the velocity rather than the velocity quantised down
+to whole segments per step; a step that stalls is field limited rather than clock
+limited, and drops the remainder instead of spending it on the step after.
+
+The resistive drop is what this buys. §3.4a's double count -- Fritz's 220 kΩ
+carrying part of the channel gradient that the E ℓ term charges again -- is
+retired by there being no E ℓ term: growth stops where the tip field falls below
+the critical propagation field, and for that to bite mid-burst the tip potential
+has to fall along the channel. Node k sits at V − i R_path(k), with R_path the
+root-to-node resistance of every node at once, one forward prefix pass over
+segments in the order growth appends them, the exact mirror of the reverse pass
+`subtree_charges` uses and O(n) like it: no path is walked and no ancestor matrix
+is formed. The segment sources sit at the mean of their own two endpoints, the
+point their charge is matched at, so §3.4b's mixed solve carries the drop as well
+as the geometry, and the field the growth rule compares against the critical one
+is in V/m rather than per unit channel potential. The per-metre resistance is
+Fritz's own 220 kΩ read as the gradient it always was, ρ = π r² × 220 kΩ/m at
+the channel radius, so the model reuses his number instead of fitting one.
+
+Cooling prunes. Growth appends, so the youngest segments are the highest indices
+and the decay drops a suffix: the reach the channel stays hot enough to hold is
+refreshed to the extent by every tip and decays with the channel's own cooling
+time, and the tree keeps the longest prefix whose extent is within half a growth
+step of it. That is O(n) with no rebuild -- the bordered factor truncates, the
+candidate pool drops the sites of nodes that no longer exist and the columns of
+segments that no longer exist -- and every parent still precedes its child, so
+the survivor is a `Tree` and the prefix it grew through is the prefix it decays
+back through, level for level, which is why the stage cache is revisited rather
+than rebuilt.
+
+Two constructions the moving resistance forces. The floor is one. The scalar
+model holds the branch while omega R C sits below a fraction of its own 1 / R,
+and with R fixed that is a statement about the capacitance alone, which is why it
+can be written as a length; here R is the tree's, so the floor is taken against
+the branch actually built, omega R_eq(tree) C(tree) against the same fraction,
+and the capacitance ladder above it keeps its geometric origin because a level
+still has to determine the branch. Against a nominal resistance instead the
+example channel's first segment is released into a material branch at an
+admittance of 5.3e-4, half the floor it was meant to clear. The other is the
+ledger's channel term, in §3.5.
+
+The series resistance does not rise monotonically with the tree. Lengthening a
+chain raises it and branching lowers it, the parallel paths dividing the charging
+current between them; that is a thing a lumped 220 kΩ cannot say and a channel
+grown geometrically says by construction, so §5 checks the rise along a chain and
+claims it nowhere else.
+
+What remains open is size. A bang reachable inside a test budget grows tens of
+segments rather than the few hundred of a real one: the cost is the circuit's,
+256 steps per cycle against one segment per h / v, and a coupled bang costs what
+the scalar one costs to within a quarter either way, the tree's growth being paid
+for by the stages it does not have to build.
+
 ### 3.5 Loss extraction
 
 Conduction loss is already in the state space and comes back out of it by
@@ -520,6 +592,22 @@ makes the ledger a post-pass over a Result: IGBT and diode conduction, primary
 loop, tank ESR, per-mode winding, former dielectric and streamer channel, whose
 total is Result.dissipation to rounding -- the quantity the burst energy balance
 of §5 already validates.
+
+One term of that ledger is not a trapezoid. The channel is a series R-C branch
+whose R C falls below the step while the channel is short -- a grown channel's
+resistance falls with its own length where Fritz's constant did not -- so the
+relaxation that follows a change of branch is faster than a step, and a
+trapezoid of its power over-counts that relaxation by 2 dt / R C, which at a
+level change is the whole of the energy: on a driven tree channel it leaves 2.0 %
+of the bus energy unaccounted, falling only first order with the step. The branch
+is one first-order state, so its interval is integrated in closed form instead --
+exactly for its own dynamics, with the top voltage linear across the interval as
+every other weight in the ledger is held across it -- which is O(1) per interval
+and needs nothing a run does not already record. The residual it leaves is 2.7e-5
+on that run, and second order. The correction is not confined to the grown
+channel: it moves the length model's own dissipation by 2.1e-4 relative and cuts
+its energy residual threefold, so a run's ledger is deliberately not the number
+it was, where every series, every other observable and the final state are.
 
 Switching energy is not separable that way because it is not in there at all.
 The piecewise-linear state space carries no transition dynamics, so a
@@ -790,6 +878,19 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Grown tree structure | parents precede children, above ground, outside the electrode, every segment one step | exact, 1e-15 on the length |
 | Growth termination | the step cap at zero critical field; a short tree above it; none above the electrode's own | exact |
 | Grown channel load | `channel_load` against segment count | capacitance rising, series resistance positive |
+| Scalar channel through the generalised seam | the same run driven through the pre-generalisation calls; every series against the model's own level, capacitance and constant | bit for bit, the ledger's own quadrature apart, 3.5 |
+| Scalar length through the seam | the length re-integrated from `Streamer.advance` at each interval's own voltage and margin | 1e-9 rel |
+| Path resistance | a naive per-node ancestor walk, summed root first | exact |
+| Tip potential | the drive less i R_path at every node, and the drive itself at zero current | exact |
+| Growth clock | segments grown over a span against v t / h at 3.4a's velocity, in thirds of a segment | the carried remainder, 9 or 10 of 10 |
+| Channel resistivity | `series_resistance` of a one-metre channel against Fritz's 220 kOhm | 1e-12 rel |
+| Pruning | the decayed tree against the grown one's prefix, and the root left behind | prefix exact; extent within half a growth step |
+| Coupled bang | the tree at every interval of a run that breaks out on its own | valid `Tree` throughout, extent monotone, segments one step |
+| Grown-channel levels | the stages a decaying channel lands on, against the ones it grew through | no stage rebuilt |
+| Grown-channel ledger | bus energy in against dissipation and storage, the branch material for most of the run | 1e-4 at the nominal step, 1e-5 at a quarter of it |
+| Branch interval energy | `scipy.integrate.solve_ivp` DOP853 of the branch's own ODE, at R C from 11 to 0.001 of the interval | 1e-9 rel |
+| Branch floor | the level against the branch's own omega R C, and the branch each level is built at | exact; the ladder within half a level |
+| Grown-channel determinism | a run against itself at one seed, and against another seed | bit for bit; different |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 | Foster step response | its own closed form Zth(t) = sum R (1 - exp(-t/tau)) | 1e-12 rel |

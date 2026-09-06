@@ -65,6 +65,14 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
         """Length a held top voltage sustains, growth against gradient and cooling."""
         return self.growth * abs(voltage) / self.rate
 
+    def initial(self, seed=0.0, rng=None):  # pylint: disable=unused-argument
+        """Channel state a run starts from; the scalar model's own is its length."""
+        return float(seed)
+
+    def extent(self, length):
+        """Scalar spark length of a state, which is the state itself."""
+        return length
+
     def level(self, length):
         """Quantised capacitance level of a length, geometric in ``tolerance``."""
         if length <= self.minimum:
@@ -75,14 +83,21 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
         """Channel capacitance of a quantised level, F."""
         return self.capacitance * self.minimum * (1.0 + self.tolerance) ** level
 
-    def advance(self, length, voltage, margin, dt):
+    def resistance_at(self, level):  # pylint: disable=unused-argument
+        """Channel resistance of a quantised level: Fritz's constant, at any length."""
+        return self.resistance
+
+    def advance(self, length, voltage, margin, dt, current=0.0):
         """Length after ``dt`` with the top voltage held, by the exact linear update.
 
         Initiation needs the electrode surface to reach Peek's threshold; once a
         channel exists its own tip carries the field, so growth continues on the
         top voltage alone. Both regimes of ``(|v| - E l)_+`` are linear, so each
-        step is one exponential rather than a sub-stepped integration.
+        step is one exponential rather than a sub-stepped integration. The
+        channel current is the tree model's, and the lumped branch has no use
+        for it.
         """
+        # pylint: disable=unused-argument
         if length <= 0.0 and margin < 1.0:
             return 0.0
         voltage = abs(voltage)

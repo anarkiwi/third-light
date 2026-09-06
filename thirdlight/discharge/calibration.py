@@ -21,13 +21,14 @@ def freau_length(power, coefficient=FREAU_COEFFICIENT):
     return coefficient * np.sqrt(np.asarray(power, dtype=float))
 
 
-def burst(machine, streamer, length=0.0, tail=5.0):
+def burst(machine, streamer, length=0.0, tail=5.0, rng=None):
     """One burst from a cold circuit and a channel of ``length``.
 
     It runs ``tail`` resonant periods past the burst's end, far enough for the
-    tank to ring down and return what it holds to the bus.
+    tank to ring down and return what it holds to the bus. ``rng`` is the
+    randomness of a grown channel, and nothing to the scalar model.
     """
-    return machine.run(span(machine, tail), streamer=streamer, length0=length)
+    return machine.run(span(machine, tail), streamer=streamer, length0=length, rng=rng)
 
 
 def span(machine, tail=5.0):
@@ -35,7 +36,7 @@ def span(machine, tail=5.0):
     return machine.driver.interrupter.on_time + tail / machine.frequency
 
 
-def operating_point(machine, streamer, cycles=8, rtol=1e-3):
+def operating_point(machine, streamer, cycles=8, rtol=1e-3, rng=None):
     """Average input power and settled spark length of one interrupter cycle.
 
     The burst is iterated from what the previous one left after cooling until the
@@ -46,7 +47,7 @@ def operating_point(machine, streamer, cycles=8, rtol=1e-3):
     gap = interrupter.period - span(machine)
     length, result = 0.0, None
     for _ in range(cycles):
-        result = burst(machine, streamer, length)
+        result = burst(machine, streamer, length, rng=rng)
         seed = result.length[-1] * math.exp(-gap / streamer.cooling)
         settled = abs(seed - length) <= rtol * max(seed, streamer.minimum)
         length = seed
@@ -55,7 +56,7 @@ def operating_point(machine, streamer, cycles=8, rtol=1e-3):
     return result.input_energy * interrupter.frequency, float(result.length.max())
 
 
-def sweep(machine, streamer, buses, frequencies=None):
+def sweep(machine, streamer, buses, frequencies=None, rng=None):
     """Operating points over bus voltages and, optionally, burst repetition rates.
 
     Neither the bus nor the interrupter enters the state space, so every point
@@ -67,7 +68,9 @@ def sweep(machine, streamer, buses, frequencies=None):
         gating = replace(machine.driver.interrupter, frequency=frequency)
         for bus in buses:
             driver = replace(machine.driver, bus=bus, interrupter=gating)
-            points.append(operating_point(replace(machine, driver=driver), streamer))
+            points.append(
+                operating_point(replace(machine, driver=driver), streamer, rng=rng)
+            )
     return np.array(points).T
 
 

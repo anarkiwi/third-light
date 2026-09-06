@@ -29,14 +29,15 @@ def thermoacoustic_volume(energy):
     return (GAMMA - 1.0) * np.asarray(energy, dtype=float) / (GAMMA * AMBIENT_PRESSURE)
 
 
-def _mean_power(t, power, rate):
+def _mean_power(t, power, rate, energy=None):
     """Event-stepped channel power as its mean over each audio sample, W.
 
-    The energy is the ledger's own trapezoid and the samples are the differences
-    of it interpolated, so no heat is created or lost by the resampling, and the
+    The energy is the ledger's own and the samples are the differences of it
+    interpolated, so no heat is created or lost by the resampling, and the
     boxcar's nulls at every multiple of the rate keep the carrier out of the band.
     """
-    energy = cumulative_trapezoid(power, t, initial=0.0)
+    if energy is None:
+        energy = cumulative_trapezoid(power, t, initial=0.0)
     count = max(int(round((t[-1] - t[0]) * rate)) + 1, 2)
     edges = t[0] + (np.arange(count + 1) - 0.5) / rate
     return np.diff(np.interp(edges, t, energy)) * rate
@@ -53,6 +54,7 @@ def bang(result, distance=DISTANCE, rate=SAMPLE_RATE):
         np.asarray(result.t, dtype=float),
         np.asarray(result.streamer_power, dtype=float),
         rate,
+        np.concatenate([[0.0], np.cumsum(result.channel_energies)]),
     )
     gain = (GAMMA - 1.0) / (4.0 * math.pi * SOUND_SPEED**2 * distance)
     delay = int(round(distance / SOUND_SPEED * rate))

@@ -14,7 +14,7 @@ from scipy.optimize import brentq
 from thirdlight.circuit import Network, with_streamer
 from thirdlight.circuit.devices import polarity
 from thirdlight.solver.propagator import Propagator
-from thirdlight.thermal.ledger import integrate, ledger
+from thirdlight.thermal.ledger import branch_energies, integrate, ledger
 
 _XTOL = 1e-14
 
@@ -32,6 +32,7 @@ class Result:  # pylint: disable=too-many-instance-attributes
     length: np.ndarray
     channel: np.ndarray
     loss: np.ndarray
+    resistance: np.ndarray | None = None
 
     def __len__(self):
         return len(self.t)
@@ -77,15 +78,38 @@ class Result:  # pylint: disable=too-many-instance-attributes
 
     @property
     def streamer_current(self):
-        """Current drawn from the top node by the streamer, A."""
-        return self.network.streamer_current(self.x)
+        """Current drawn from the top node by the streamer, A.
+
+        A grown channel's resistance moves with it, so the current is taken at
+        the resistance each sample was stepped at.
+        """
+        if self.network.streamer is None or self.resistance is None:
+            return self.network.streamer_current(self.x)
+        top = self.network.top_voltage(self.x) - self.network.streamer_voltage(self.x)
+        return top / self.resistance
 
     @property
     def streamer_power(self):
         """Power dissipated in the streamer channel resistance, W."""
         if self.network.streamer is None:
             return np.zeros_like(self.t)
-        return self.network.streamer[0] * self.streamer_current**2
+        ohmic = self.network.streamer[0] if self.resistance is None else self.resistance
+        return ohmic * self.streamer_current**2
+
+    @property
+    def channel_energies(self):
+        """Energy the channel resistance dissipates over each interval, J.
+
+        Exact for the branch's own first-order dynamics rather than a trapezoid
+        of its power, which cannot resolve a branch faster than the step; see
+        §3.5. A run whose branch was never built falls back to the trapezoid.
+        """
+        power = np.asarray(self.streamer_power, dtype=float)
+        if self.network.streamer is None or self.resistance is None:
+            return 0.5 * (power[:-1] + power[1:]) * np.diff(self.t)
+        top = self.network.top_voltage(self.x)
+        drop = top - self.network.streamer_voltage(self.x)
+        return branch_energies(self.t, drop, top, self.resistance, self.channel)
 
     @property
     def _swing(self):
@@ -113,13 +137,14 @@ class Result:  # pylint: disable=too-many-instance-attributes
         Every weight -- which devices conduct, which bridge polarity stands
         across the tank -- is held over the interval that follows the sample it
         was recorded at, so the integrand is trapezoidal within an interval and
-        discontinuous only between them.
+        discontinuous only between them. The channel is the exception, and is
+        integrated exactly; see :attr:`channel_energies`.
         """
         i = self.network.currents(self.x)
         ohmic = self.network.resistances[self.state]
         loops = integrate(self.t, ohmic[:-1], i * i, sums=True)
         devices = integrate(self.t, -self.u[:, 0], self.primary_current)
-        channel = integrate(self.t, None, self.streamer_power)
+        channel = float(self.channel_energies.sum())
         return loops + devices + channel + float(self.loss[-1] - self.loss[0])
 
 
@@ -211,39 +236,51 @@ def _propagators(network, step):
 
 
 class _Channel:  # pylint: disable=too-many-instance-attributes
-    """The streamer's length, and the network stage its capacitance calls for.
+    """A channel model's state, and the network stage its level calls for.
 
-    The channel capacitance moves by a set fraction at a time, so a run visits a
-    few hundred stages and revisits them as the channel decays; each is
-    diagonalised once and kept. Without a streamer this is the one stage the
-    network was handed in.
+    The model owns its state and quantises it into levels whose capacitance and
+    resistance the branch is built at, so a run visits a few hundred stages and
+    revisits them as the channel decays; each is diagonalised once and kept.
+    Without a model this is the one stage the network was handed in.
     """
 
-    def __init__(self, network, step, streamer, length=0.0):
-        self.streamer = streamer
+    def __init__(self, network, step, model, seed=0.0, rng=None):
+        self.model = model
         self.step = step
         self.base = network
         self.stages = {}
-        self.length = length
+        self.state = None if model is None else model.initial(seed, rng)
         self.loss = 0.0
-        self.level = 0 if streamer is None else streamer.level(length)
+        self.level = 0 if model is None else model.level(self.state)
         self.network, self.props = self.stage(self.level)
 
     def stage(self, level):
-        """The (network, propagators) pair of a quantised capacitance level."""
-        if self.streamer is None:
+        """The (network, propagators) pair of a quantised channel level."""
+        if self.model is None:
             return self.base, _propagators(self.base, self.step)
         if level not in self.stages:
             grown = with_streamer(
-                self.base, self.streamer.resistance, self.streamer.capacitance_at(level)
+                self.base,
+                self.model.resistance_at(level),
+                self.model.capacitance_at(level),
             )
             self.stages[level] = (grown, _propagators(grown, self.step))
         return self.stages[level]
 
     @property
+    def length(self):
+        """Scalar spark length of the present state, what a photograph measures, m."""
+        return 0.0 if self.model is None else self.model.extent(self.state)
+
+    @property
     def capacitance(self):
         """Channel capacitance the network is presently built at, F."""
-        return 0.0 if self.streamer is None else self.network.streamer[1]
+        return 0.0 if self.model is None else self.network.streamer[1]
+
+    @property
+    def resistance(self):
+        """Channel resistance the network is presently built at, ohm."""
+        return 0.0 if self.model is None else self.network.streamer[0]
 
     def retune(self, x):
         """Rebuild at the present length's level, and return the state it leaves.
@@ -255,10 +292,10 @@ class _Channel:  # pylint: disable=too-many-instance-attributes
         work of extending the channel or with the charge the cooled part removed,
         and neither direction creates any.
         """
-        if self.streamer is None or self.streamer.level(self.length) == self.level:
+        if self.model is None or self.model.level(self.state) == self.level:
             return x
         before = self.capacitance
-        self.level = self.streamer.level(self.length)
+        self.level = self.model.level(self.state)
         self.network, self.props = self.stage(self.level)
         after = self.capacitance
         x = x.copy()
@@ -269,15 +306,24 @@ class _Channel:  # pylint: disable=too-many-instance-attributes
         return x
 
     def grow(self, x, voltage, dt):
-        """Advance the length over ``dt`` with the top voltage held at ``voltage``."""
-        if self.streamer is None:
+        """Advance the state over ``dt`` with the top voltage held at ``voltage``."""
+        if self.model is None:
             return
-        margin = self.streamer.breakout.margin(self.network.voltages(x)[1:])
-        self.length = self.streamer.advance(self.length, voltage, margin, dt)
+        margin = self.model.breakout.margin(self.network.voltages(x)[1:])
+        current = float(self.network.streamer_current(x))
+        self.state = self.model.advance(self.state, voltage, margin, dt, current)
 
 
 def simulate(  # pylint: disable=too-many-statements
-    network, driver, duration, step, load=None, x0=None, streamer=None, length0=0.0
+    network,
+    driver,
+    duration,
+    step,
+    load=None,
+    x0=None,
+    streamer=None,
+    length0=0.0,
+    rng=None,
 ):
     """Run ``network`` under ``driver`` for ``duration`` seconds at nominal ``step``.
 
@@ -287,9 +333,10 @@ def simulate(  # pylint: disable=too-many-statements
     loading it applies is exact at any length rather than held across a step.
     ``x0`` may be shorter than the state, which zero-fills the rest, so a run can
     be seeded from one made without a streamer, and ``length0`` seeds the channel
-    with what the last burst left behind.
+    with what the last burst left behind. A grown channel takes ``rng``, which is
+    the whole of its randomness, so a run at a fixed seed repeats exactly.
     """
-    channel = _Channel(network, step, streamer, length0)
+    channel = _Channel(network, step, streamer, length0, rng)
     network, props = channel.network, channel.props
     unit = np.eye(network.size)[0]
     seq = driver.sequencer()
@@ -325,6 +372,7 @@ def simulate(  # pylint: disable=too-many-statements
                 channel.length,
                 channel.capacitance,
                 channel.loss,
+                channel.resistance,
             )
         )
         if t >= duration:
@@ -356,7 +404,7 @@ def simulate(  # pylint: disable=too-many-statements
             x[0] = 0.0
         elif sign_fb == 0.0:
             sign_fb = np.sign(lead[0] @ x + lead[1])
-    times, states, gates, rows, inputs, lengths, channels, losses = zip(*history)
+    times, states, gates, rows, inputs, lengths, channels, losses, ohmic = zip(*history)
     return Result(
         t=np.array(times),
         x=np.array(states),
@@ -367,4 +415,5 @@ def simulate(  # pylint: disable=too-many-statements
         length=np.array(lengths),
         channel=np.array(channels),
         loss=np.array(losses),
+        resistance=np.array(ohmic),
     )

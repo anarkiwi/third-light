@@ -6,6 +6,8 @@ import math
 import numpy as np
 import pytest
 import yaml
+from scipy.integrate import solve_ivp
+from scipy.linalg import expm
 from test_stepping import driver, modal, network, period
 
 from thirdlight import thermal
@@ -45,14 +47,18 @@ def switched(on=(0.0, 1.0e-5), off=(0.0, 2.0e-5), rr=(0.0, 5.0e-6), full=True):
     )
 
 
+def bare():
+    """The geometry keys that shrink the example to what a test can run."""
+    return {
+        "secondary": {**SPEC["secondary"], "turns": 60},
+        "sections": 20,
+        "top_load_sections": 8,
+    }
+
+
 def small(**changes):
     """The example machine shrunk to a size the interpreted coverage pass can run."""
-    spec = copy.deepcopy(SPEC)
-    spec["secondary"]["turns"] = 60
-    spec["sections"] = 20
-    spec["top_load_sections"] = 8
-    spec.update(changes)
-    return Machine.from_dict(spec)
+    return Machine.from_dict({**copy.deepcopy(SPEC), **bare(), **changes})
 
 
 def sinusoid(net, halves=4, per_half=2000):
@@ -372,3 +378,314 @@ def test_the_example_carries_switching_fits_and_a_tank_dissipation_factor():
     assert machine.bridge.diode.recovery.coefficients == (0.0, 5.0e-5, -3.0e-8)
     assert machine.network.esr > 0.0
     assert np.all(np.asarray(machine.bridge.commutation(200.0, 150.0, V_BUS)) > 0.0)
+
+
+FOSTER = {
+    "resistances": [0.033, 0.075, 0.09, 0.05],
+    "time_constants": [7.0e-4, 5.0e-3, 0.03, 0.2],
+    "foster": True,
+}
+LADDER = {"resistances": [0.05, 0.5], "capacitances": [50.0, 450.0]}
+STACKED = {
+    "igbt": {"resistances": [0.12, 0.13], "capacitances": [0.02, 0.5]},
+    "diode": {"resistances": [0.2, 0.25], "capacitances": [0.01, 0.3]},
+    "sink": {"resistances": [0.05, 0.5], "capacitances": [5.0, 45.0]},
+    "coil": {"resistances": [0.1, 0.4], "capacitances": [25.0, 12.0]},
+    "capacitor": {"resistances": [2.0], "capacitances": [20.0]},
+    "ambient": 25.0,
+}
+BURST, GAP = 3.0e-4, 4.7e-3
+
+
+def branch(spec, ambient=0.0):
+    """One thermal branch standing on ambient, as a one-port model."""
+    return thermal.assemble(
+        ((thermal.Rungs.from_dict(spec),), thermal.Rungs()),
+        ports=("die",),
+        ambient=ambient,
+    )
+
+
+def integrated(model, span, power, start):
+    """State after ``span`` and its time integral, from expm of the augmented block.
+
+    dy/dt = T appended to dT/dt = A T + B p with p held, so one exponential
+    carries both, independently of the propagator under test.
+    """
+    size, inputs = model.b.shape
+    block = np.zeros((2 * size + inputs, 2 * size + inputs))
+    block[:size, :size], block[:size, size : size + inputs] = model.a, model.b
+    block[size + inputs :, :size] = np.eye(size)
+    out = expm(block * span) @ np.concatenate([start, power, np.zeros(size)])
+    return out[:size], out[size + inputs :]
+
+
+def profile(count, ports=4):
+    """A bang's energy: a ring-up into a flat top, and nothing in its last window.
+
+    A uniform profile is exactly what one segment already is, so subdividing it
+    would be free of error; what a subdivision resolves is the shape.
+    """
+    ring = np.minimum(3.0 * np.linspace(0.0, 1.0, count), 1.0)
+    shape = ring * (np.arange(count) < count - 1)
+    return np.outer(shape / shape.sum(), np.linspace(1.0, 0.25, ports))
+
+
+def rebinned(joules, count):
+    """The same burst energy over ``count`` coarser windows."""
+    return joules.reshape(count, len(joules) // count, joules.shape[1]).sum(axis=1)
+
+
+def driven(bus=2000.0, **changes):
+    """The shrunken machine driven hard, with a burst short enough to run in a test."""
+    return small(
+        driver={
+            **SPEC["driver"],
+            "bus": bus,
+            "interrupter": {"on_time": 4.0e-6, "frequency": 20000.0},
+        },
+        **changes,
+    )
+
+
+def test_a_foster_chain_is_the_zth_it_was_fitted_from():
+    """Its step response is the closed form sum R (1 - exp(-t/tau)) it stands for."""
+    model = branch(FOSTER)
+    r = np.array(FOSTER["resistances"])
+    tau = np.array(FOSTER["time_constants"])
+    times = np.array([1.0e-5, 1.0e-3, 0.05, 1.0])
+    propagator = model.propagator(times[-1])
+    for t in times:
+        rise = model.temperature(propagator.at(t)[1] @ np.ones(1))
+        assert rise == pytest.approx((r * -np.expm1(-t / tau)).sum(), rel=1e-12)
+
+
+def test_a_cauer_ladder_matches_an_independent_stiff_solver():
+    """The node equations integrated by DOP853 at rtol 1e-13, as elsewhere in the suite."""
+    model = branch(LADDER)
+    power, start, span = np.array([12.0]), np.array([3.0, -1.0]), 60.0
+    reference = solve_ivp(
+        lambda _, x: model.a @ x + model.b @ power,
+        (0.0, span),
+        start,
+        method="DOP853",
+        rtol=1e-13,
+        atol=1e-16,
+    ).y[:, -1]
+    assert model.propagator(span).advance(start, power) == pytest.approx(
+        reference, rel=1e-9
+    )
+
+
+def test_one_rung_is_the_same_network_either_way():
+    """R in parallel with C is the same whether it is called Foster or Cauer."""
+    spec = {"resistances": [0.4], "time_constants": [0.05]}
+    foster, cauer = branch({**spec, "foster": True}), branch(spec)
+    assert foster.capacitance == pytest.approx(cauer.capacitance, rel=1e-12)
+    assert foster.conductance == pytest.approx(cauer.conductance, rel=1e-12)
+    assert foster.injection == pytest.approx(cauer.injection, rel=1e-12)
+
+
+def test_the_dc_limit_is_thermal_ohms_law():
+    """A steady watt lifts a port by the resistances between it and ambient."""
+    stack = thermal.Stack.from_dict({**STACKED, "igbt": FOSTER})
+    model = stack.model
+    hottest = model.temperature(model.equilibrium([3.0, 0.0, 0.0, 0.0]))
+    assert hottest[0] == pytest.approx(
+        stack.ambient + 3.0 * (stack.igbt.total + stack.sink.total), rel=1e-12
+    )
+    assert hottest[1] == pytest.approx(
+        stack.ambient + 3.0 * stack.sink.total, rel=1e-12
+    )
+    assert hottest[2:] == pytest.approx([stack.ambient] * 2, rel=1e-12)
+    alone = model.equilibrium([0.0, 0.0, 7.0, 0.0])
+    assert model.temperature(alone)[2] == pytest.approx(
+        stack.ambient + 7.0 * stack.coil.total, rel=1e-12
+    )
+
+
+def test_an_empty_branch_reports_what_it_stands_on():
+    """A device with no impedance of its own is the temperature of its case."""
+    stack = thermal.Stack.from_dict({**STACKED, "diode": {}})
+    model = stack.model
+    assert len(stack.diode) == 0
+    assert model.temperature(model.equilibrium([2.0, 5.0, 0.0, 0.0]))[1] == (
+        pytest.approx(stack.ambient + 7.0 * stack.sink.total, rel=1e-12)
+    )
+    with pytest.raises(ValueError):
+        _ = thermal.Stack().model
+    with pytest.raises(ValueError):
+        thermal.assemble(((stack.coil,), thermal.Rungs()))
+
+
+def test_the_heat_that_went_in_is_held_or_gone_to_ambient():
+    """Energy in equals what the capacities hold plus what left by the ambient node.
+
+    The column sums of G are the leak, nonzero only where a path meets ambient:
+    one node per group, at that group's own last conductance.
+    """
+    model = thermal.Stack.from_dict(STACKED).model
+    power = np.array([40.0, 12.0, 25.0, 6.0])
+    start = np.linspace(0.0, 3.0, model.size)
+    leak = model.conductance.sum(axis=0)
+    assert model.injection.sum(axis=0) == pytest.approx(np.ones(4), rel=1e-12)
+    assert np.count_nonzero(np.abs(leak) > 1e-12) == 3
+    assert sorted(leak[leak > 1e-12]) == pytest.approx([0.5, 2.0, 2.5], rel=1e-12)
+    state, integral = integrated(model, 30.0, power, start)
+    stored = model.capacitance @ (state - start)
+    assert stored + leak @ integral == pytest.approx(power.sum() * 30.0, rel=1e-12)
+
+
+def test_the_closed_form_settled_cycle_is_the_limit_of_iterating_it():
+    """(I - Phi)^-1 q against the cycle map applied until it stops moving."""
+    model = branch({"resistances": [0.4, 0.6], "time_constants": [2.0e-4, 1.5e-3]})
+    joules = np.linspace(0.02, 0.005, 6)[:, None]
+    span = BURST / len(joules)
+    settled = thermal.steady(model, span, joules, GAP)
+    propagator = model.propagator(GAP)
+    advance, drive = propagator.at(span)
+    quiet = propagator.at(GAP)[0]
+    state = np.zeros(model.size)
+    for _ in range(200):
+        for row in joules:
+            state = advance @ state + drive @ (row / span)
+        state = quiet @ state
+    assert state == pytest.approx(settled.state[0], rel=1e-9)
+    assert settled.t[-1] == pytest.approx(BURST + GAP, rel=1e-12)
+    with pytest.raises(ValueError):
+        thermal.steady(model, span, joules, 0.0)
+
+
+def test_the_cycle_mean_is_the_dc_state_at_the_mean_power():
+    """A settled cycle returns its stored heat, so its mean is the DC state at its mean power."""
+    model = thermal.Stack.from_dict(STACKED).model
+    joules = profile(8)
+    settled = thermal.steady(model, BURST / len(joules), joules, GAP, rest=3)
+    total, state = np.zeros(model.size), settled.state[0]
+    for index, step in enumerate(np.diff(settled.t)):
+        power = joules[index] / step if index < len(joules) else np.zeros(4)
+        state, integral = integrated(model, step, power, state)
+        total = total + integral
+    assert state == pytest.approx(settled.state[0], rel=1e-9, abs=1e-12)
+    assert model.temperature(total / (BURST + GAP)) == pytest.approx(
+        list(settled.mean.values()), rel=1e-9
+    )
+    assert settled.power == pytest.approx(joules.sum(axis=0) / (BURST + GAP), rel=1e-12)
+
+
+def test_the_settled_peak_converges_as_the_burst_is_subdivided():
+    """One impulse under-resolves a burst comparable with the fastest rung.
+
+    The default count is the smallest whose peak lands within 1e-4 of its rise of
+    the four times finer one; a network far slower than the burst does not care.
+    """
+    fine = profile(256)
+    quick = branch({"resistances": [0.3, 0.5], "time_constants": [1.0e-3, 0.05]})
+    slow = branch({"resistances": [0.3, 0.5], "time_constants": [10.0, 100.0]})
+
+    def peak(model, count):
+        joules = rebinned(fine, count)[:, :1]
+        return thermal.steady(model, BURST / count, joules, GAP).peak["die"]
+
+    peaks = np.array([peak(quick, count) for count in (1, 2, 4, 8, 16, 32)])
+    assert np.all(np.diff(np.abs(np.diff(peaks))) < 0.0)
+    reference = peak(quick, 4 * thermal.WINDOWS)
+    assert abs(peak(quick, thermal.WINDOWS) - reference) < 1e-4 * reference
+    assert abs(peak(quick, thermal.WINDOWS // 2) - reference) > 1e-4 * reference
+    assert peak(slow, 1) == pytest.approx(peak(slow, 64), rel=1e-5)
+
+
+def test_the_windows_of_a_run_sum_to_the_ledger_of_the_whole():
+    """Every interval and every commutation is attributed to exactly one window."""
+    result = sinusoid(tanked(dissipation_factor=2e-3))
+    whole = thermal.sources(result.losses(tj=110.0))
+    for count, until in ((7, None), (4, 0.5 * result.t[-1]), (1, None)):
+        spans, joules = thermal.energies(result, count, 110.0, until)
+        assert joules.sum(axis=0) == pytest.approx(whole, rel=1e-12)
+        assert spans.sum() == pytest.approx(result.t[-1] - result.t[0], rel=1e-12)
+    assert np.all(whole > 0.0)
+
+
+def test_the_temperature_feedback_settles_wherever_it_started():
+    """Losses depend on temperature and temperature on losses; the loop closes."""
+    machine = driven()
+    cold, warm = machine.temperatures(), machine.temperatures(guess=200.0)
+    assert cold.converged and warm.converged
+    for port, value in cold.peak.items():
+        assert warm.peak[port] == pytest.approx(value, rel=1e-2)
+    assert cold.peak["igbt"] > cold.mean["igbt"] > machine.thermal.ambient
+    assert cold.ripple["igbt"] > cold.ripple["coil"]
+
+
+def test_a_channel_carries_its_own_length_around_the_same_loop():
+    """The streamer's between-burst decay is seeded pass to pass with the temperatures."""
+    machine = driven()
+    settled = machine.temperatures(machine.streamer(growth=2.0, cooling=2e-5), passes=2)
+    assert settled.power.sum() > 0.0
+    assert settled.peak["igbt"] > machine.thermal.ambient
+
+
+def test_a_coil_in_thermal_runaway_is_not_reported_as_settled():
+    """The switching fits rise with junction temperature, which can have no fixed point."""
+    settled = driven(bus=2.0e4).temperatures()
+    assert not settled.converged
+    assert settled.peak["igbt"] > 1000.0
+
+
+def test_the_example_carries_thermal_networks_and_one_without_them_still_loads():
+    """The schema keys reach the machine, and every older design keeps loading."""
+    machine = small()
+    assert machine.thermal.ambient == 25.0
+    assert machine.thermal.igbt.foster and len(machine.thermal.igbt) == 4
+    assert machine.thermal.sink.total == pytest.approx(0.55)
+    assert machine.thermal.model.size == 13
+    spec = copy.deepcopy(SPEC)
+    spec.pop("thermal")
+    for kind in ("igbt", "diode"):
+        spec["bridge"][kind].pop("zth")
+    plain = Machine.from_dict({**spec, **bare()})
+    assert plain.thermal == thermal.Stack()
+    assert plain.bridge.igbt.turn_on.v_test == 600.0
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"resistances": [1.0], "capacitances": [1.0, 2.0]},
+        {"resistances": [0.0], "capacitances": [1.0]},
+        {"resistances": [1.0], "capacitances": [-1.0]},
+    ],
+)
+def test_a_branch_needs_one_positive_capacitance_per_positive_resistance(spec):
+    """A malformed Zth is refused where it is given, not where it is solved."""
+    with pytest.raises(ValueError):
+        thermal.Rungs.from_dict(spec)
+
+
+@pytest.mark.slow
+def test_the_example_machine_runs_its_junction_up_where_the_ripple_matters():
+    """A lagging DRSSTC hard switches, and it is the ripple that decides the die.
+
+    The subdivision criterion is checked on the machine itself: the default count
+    lands within 1e-4 of its rise of four times finer, and one impulse does not.
+    """
+    machine = Machine.from_yaml("examples/drsstc.yaml")
+    channel = machine.streamer()
+    settled = machine.temperatures(channel)
+    assert settled.converged
+    assert 100.0 < settled.peak["igbt"] < 250.0
+    assert settled.ripple["igbt"] > 20.0
+    assert settled.mean["capacitor"] > settled.mean["coil"] > machine.thermal.ambient
+    edge = machine.driver.interrupter.on_time
+    result = machine.run(edge + 5.0 / machine.frequency, streamer=channel)
+    gap = machine.driver.interrupter.period - result.t[-1]
+    junction = settled.burst["igbt"]
+
+    def peak(count):
+        spans, joules = thermal.energies(result, count, junction, edge)
+        return thermal.steady(machine.thermal.model, spans, joules, gap).peak["igbt"]
+
+    reference = peak(4 * thermal.WINDOWS)
+    rise = reference - machine.thermal.ambient
+    assert abs(peak(thermal.WINDOWS) - reference) < 1e-4 * rise
+    assert abs(peak(1) - reference) > 1e-3 * rise

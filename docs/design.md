@@ -35,7 +35,7 @@ detailed plasma chemistry.
 | Streamer load | Fritz lumped model: R_s ≈ 220 kΩ in series with ~1–2 pF per foot of streamer, length ℓ(t) evolves with top voltage and per-bang energy; QCW channel persistence | Fritz [8], Freau law [16] |
 | Breakout/corona | Surface field from the MoM solve; onset via Peek-type critical field with surface factor | Peek [17] |
 | Streamer geometry (phase 6) | Dielectric breakdown model, growth probability ∝ φ^η, fast Laplacian growth on GPU; segment charges feed back into C matrix | NPW [18], Kim et al. [19] |
-| Semiconductor thermal | E_on(I,Tj), E_off(I,Tj), E_rr polynomial fits from datasheet; conduction ∫Vce·I dt; Cauer RC junction→case→sink→ambient | [20], [21] |
+| Semiconductor thermal | E_on(I,Tj), E_off(I,Tj), E_rr polynomial fits from datasheet; conduction ∫Vce·I dt; Foster or Cauer rungs from junction to case to sink to ambient, exact-exponential between bursts | [20], [21] |
 | Acoustics (phase 6) | Spark pulse train at interrupter PRF; SPL proxy from energy per bang | Teraguchi [22] |
 
 ## 3. Numerical core
@@ -233,9 +233,11 @@ Two paths, same algorithm:
   tabulated-propagator alternative would need 2.9 GB for the same batch and
   would not fit. B = 10^4 designs × 10 ms QCW burst ≈ 10 s on a mid-range GPU.
 
-Thermal states use their own exact-exponential update between bursts, with
-per-burst energies as impulses, because their time constants are 10^3–10^6
-times the electrical ones.
+Thermal states use their own exact-exponential update between bursts, because
+their time constants are 10^3–10^6 times the electrical ones. Per-burst energies
+enter it as the mean power of each of a burst's sub-intervals rather than as one
+impulse: §3.6 refines that, since a burst comparable with the fastest rung is not
+resolved by a single one and the subdivision costs a propagation per window.
 
 Elliptic integrals, potential coefficients, event stepping and DBM growth are
 written as scalar and flat-array functions compiled by `numba.njit` for the CPU
@@ -372,10 +374,80 @@ enter. Under ZCS both fall on the current zero and cost nothing; a phase lead
 turns off into current and turns on soft, and a gate delay does the reverse,
 which is the asymmetry that kills the IGBTs of a lagging DRSSTC.
 
-Junction temperature is an argument with a default, not a state. The default
-applies each fit at its own test temperature, extrapolating nothing; phase 4b
-adds the Cauer networks and the between-burst update and passes a real
-temperature back in.
+Junction temperature is an argument with a default, not a state of the run. The
+default applies each fit at its own test temperature, extrapolating nothing; §3.6
+carries the networks that produce a real one and passes it back in. It is one
+temperature for every fit, the junction the outer loop tracks, so a diode
+recovering at its own junction is evaluated at the IGBT's.
+
+### 3.6 Thermal networks and junction temperature
+
+The two forms of thermal impedance in circulation are one state space. A Cauer
+ladder's rungs are physical nodes: capacitance i is node i's heat capacity and
+resistance i carries heat to the next node, the last onto whatever the branch
+stands on. A Foster chain's rungs are the fitted Zth a datasheet publishes: each
+R parallel C carries the whole flow, so its states are temperature differences
+and only their sum is a rise. Both assemble through one primitive -- a rung is an
+edge between two terminals, adding g (e − f)(e − f)^T to G, Cauer between
+successive nodes and Foster onto the reference -- which leaves
+C dT/dt = −G T + S p as the only equation and a Foster-to-Cauer synthesis
+unnecessary. A branch's terminal is one row vector doing double duty: it reads
+the temperature at the top of the branch and, transposed, spreads a flow entering
+there, so the injection matrix and the observation matrix are the same S and
+reciprocity is structural rather than checked. Two dies over the case, sink and
+ambient path of their own module is then a group of branches on a shared path,
+and the coil and the tank capacitor are groups of one. An energy E into a port is
+the state jump C^-1 S E, and the port temperature is ambient + S^T T.
+
+Propagation is §3.2's machinery over intervals 10^3 to 10^6 times longer:
+A = −C^-1 G is diagonalised once and evaluated at each interval a cycle needs. A
+burst enters as the energy of each of its sub-intervals, held as a mean power
+across the sub-interval rather than lumped at its start, which is the exact
+solution for the power it stands for and the impulse in the limit. One impulse
+per burst does not resolve a burst comparable with the fastest rung -- 150 µs
+against a die's 0.7 ms -- and the subdivision removes that for one propagation
+per window. The windows are cut at equal steps measured against the burst's own
+end rather than the run's, so a boundary lands where the junction peaks instead
+of the energy being averaged across it; that alignment is worth more than an
+order of magnitude of window count. Their energies are §3.5's ledger evaluated on
+the slices and not a second arithmetic: consecutive windows share their boundary
+sample, so every interval closes in exactly one and every commutation is
+attributed to exactly one, and the windows sum to the run. The default of 16 is
+the smallest count whose settled peak is within 1e-4 of its own rise of the four
+times finer one: it lands at 2.2e-5 where 8 misses at 1.3e-4, 4 at 1.9e-4 and one
+impulse at 2.5e-3, and the whole subdivision costs 20 propagations of a 13-state
+network.
+
+A repeated interrupter cycle is an affine map T_end = Φ T_start + q, Φ the
+product of its segment propagators, so the settled cycle is the fixed point
+(I − Φ)^-1 q -- solved, not iterated to: the sink's own time constant is 10^4
+cycles of the example machine, which is what iterating would have to run through.
+The cycle mean falls out in closed form and needs no quadrature at all, since a
+settled cycle returns the heat it stored, leaving G times the mean state equal to
+S times the mean power: the mean is the DC state at the mean power. The peak is
+what decides whether a die survives, and it is the ripple that puts it there --
+the example settles at a 176 C mean junction with a 44 K swing across the
+cycle, so its die peaks at 209 C on 144 W of the 264 W it dissipates.
+
+Temperature re-enters the losses twice: each switching fit carries its own
+coefficient, and the winding's resistivity sets R_dc and hence the modal Q, so
+the network is rebuilt through `from_modes` off the eigen-solve the machine
+already holds, for the cost of one resistance sweep. That makes an outer fixed
+point around the closed-form one, one burst per pass at the last pass's junction
+and winding temperature; the diode and the tank capacitor are outputs of it
+rather than inputs. Its loop gain is not small -- at the example's lagging driver
+a kelvin at the junction returns 0.38 of one, so plain iteration needs seven
+passes to 1e-3 where the secant through the last two passes' residuals needs four
+-- and a gain of one or more is thermal runaway, which has no fixed point at all
+and is reported as unconverged rather than iterated over. A channel seeded from
+the previous burst rides the same loop, which is §3.4's own fixed point.
+
+What has no network is stated rather than hidden: the primary loop resistance is
+busbar and the streamer channel is in the air, so neither enters one. No
+published worked example of a junction-temperature calculation was reproducible
+here -- [20], whose switching example §3.5 does reproduce, stops at total device
+loss and publishes no Zth rungs -- so every check in §5 is analytic or
+self-consistent, and none of it is fitted.
 
 ## 4. Package layout
 
@@ -390,7 +462,7 @@ thirdlight/
   circuit/         bridge, tank, bus, diode/IGBT companion models, state-space builder
   control/         feedback CT, phase lead, comparator/delay, interrupter, MIDI, QCW ramp
   discharge/       breakout, Fritz load, length dynamics, DBM (phase 3)
-  thermal.py       loss extraction, Cauer networks
+  thermal/         loss extraction; Foster and Cauer networks, junction temperature
   solver/          expm precompute, event stepping, CUDA and CPU kernels
   batch.py         design-space expansion, sweep runner, Optuna/scipy objective glue
   io/              YAML design schema, JavaTC import, xarray/parquet output
@@ -440,6 +512,16 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Spark length vs power | published DRSSTC k = 1.2..2.1 in/sqrt(W) [12], [13], [14] | inside the band, §3.4a |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
+| Foster step response | its own closed form Zth(t) = sum R (1 - exp(-t/tau)) | 1e-12 rel |
+| Cauer ladder | `scipy.integrate.solve_ivp` DOP853 at rtol 1e-13 | 1e-9 rel |
+| One-rung network | the Foster and Cauer assemblies of the same rung | 1e-12 rel |
+| Thermal DC limit | Ohm's law sum(R) P, through a branch and through the path two dies share | 1e-12 rel |
+| Thermal energy conservation | heat in against what the capacities hold and what left by the ambient node, `expm` of the augmented block | 1e-12 rel |
+| Cycle-mean temperature | the same augmented `expm` integrated over the settled cycle | 1e-9 rel |
+| Periodic steady state | direct iteration of the cycle map to convergence | 1e-9 rel |
+| Burst subdivision | the settled peak against four times finer; a network slow against the burst against one impulse | 1e-4 of the rise; 1e-5 rel |
+| Window energies | the windows of a run against the ledger of the whole | 1e-12 rel |
+| Temperature feedback | the fixed point reached from ambient and from 200 C | 1 % |
 | Bus reservoir | first-order charging against its own R_s C_bus; energy traded with the circuit exactly | 1e-8, 1e-9 |
 
 ## 6. Engineering constraints
@@ -468,16 +550,21 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    rather than on one waveform.
 3. Streamer load and length dynamics, breakout, spark-length calibration. Done;
    the residuals and what the published data pins are in §3.4a.
-4. Thermal and loss models. The QCW bus ramp and the MIDI interrupter came
-   with the driver in phase 2, so what is left here is the thermal side.
+4. Thermal and loss models. Done; the QCW bus ramp and the MIDI interrupter came
+   with the driver in phase 2, so what was left here was the thermal side.
 4a. Switching-energy device fits, commutation attribution and the
    component-resolved loss ledger. Done; §3.5. Validated on the analytic and
    self-consistent references of §5, and on [20]'s own worked example, whose
    inverter averaging the test supplies because this model has no equivalent
    of it.
-4b. Cauer junction networks, the junction-temperature state and the
-   between-burst thermal update, consuming 4a's per-component energies.
-   Outstanding.
+4b. Foster and Cauer junction networks, the junction-temperature state and the
+   between-burst thermal update, consuming 4a's per-component energies. Done;
+   §3.6. Both impedance forms assemble into one state space rather than one
+   being synthesised into the other, the settled interrupter cycle is solved in
+   closed form rather than iterated to, and the loss/temperature loop is a
+   secant on its own residual. No published worked example of a junction
+   temperature was cleanly reproducible, so its validation is analytic and
+   self-consistent throughout.
 5. Batched GPU sweeps and optimisation front end.
 6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
 

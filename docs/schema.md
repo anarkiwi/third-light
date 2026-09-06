@@ -38,7 +38,8 @@ All lengths are metres, measured from the ground plane at z = 0.
 `thirdlight.geometry.Design.from_yaml` reads the keys above. A file that also
 carries the drive sections below is a complete machine, loaded by
 `thirdlight.machine.Machine.from_yaml`; the tank capacitance and the phase lead
-are resolved against the first secondary mode at load time.
+are resolved against the first secondary mode at load time. Key names avoid bare
+`on` and `off`, which YAML 1.1 reads as booleans.
 
 | Key | Meaning |
 |---|---|
@@ -59,6 +60,15 @@ are resolved against the first secondary mode at load time.
 | `...v_test` | datasheet blocking voltage the fit was taken at, V; omit it for a fit that is not voltage scaled |
 | `...exponent` | voltage exponent Kv, default 1 for the linear form; measured IGBTs run 1.3 to 1.4 and diode recovery about 0.6 |
 | `...tj_test` | datasheet junction temperature the fit was taken at, C, default 125 |
+| `bridge.igbt.zth`, `bridge.diode.zth` | junction-to-case thermal impedance of that device, a branch mapping of the four keys below; omitted, the junction is its own case |
+| `...resistances` | rung thermal resistances from the junction outwards, K/W |
+| `...capacitances` | rung heat capacities, J/K, one per resistance |
+| `...time_constants` | in place of `capacitances`: rung tau in seconds, C = tau/R, which is how a Zth table reads |
+| `...foster` | true for the parallel R-C rungs a datasheet publishes, false (default) for a Cauer ladder of nodes |
+| `thermal.ambient` | ambient temperature, C, default 25 |
+| `thermal.sink` | case, interface and heatsink path from the bridge module to ambient, the same branch mapping; both devices stand on it |
+| `thermal.coil` | secondary winding to ambient; it takes the winding and former dielectric loss |
+| `thermal.capacitor` | tank capacitor to ambient; it takes the ESR loss |
 | `bridge.full` | true for a full bridge, false for a half bridge |
 | `driver.lead_angle` | current-transformer phase lead in degrees at mode 1 |
 | `driver.delay` | comparator plus gate propagation delay, s |
@@ -68,6 +78,12 @@ are resolved against the first secondary mode at load time.
 | `driver.interrupter.on_time` | burst length, s |
 | `driver.interrupter.frequency` | bursts per second |
 | `driver.interrupter.notes` | in place of `frequency`: `[[start, duration, midi note], ...]` |
+
+Every thermal key defaults, so a design without them loads and runs; a
+machine with no networks at all has no temperatures to report and says so.
+Junction temperature, the settled interrupter cycle and the loss/temperature
+fixed point are `thirdlight.machine.Machine.temperatures()`, described in §3.6 of
+`docs/design.md`.
 
 The streamer is not part of the schema. It is built from a loaded machine by
 `thirdlight.machine.Machine.streamer()`, which carries the calibrated constants

@@ -17,18 +17,22 @@ from thirdlight.discharge import Streamer, breakout
 from thirdlight.em import inductance, losses
 from thirdlight.geometry import Design
 from thirdlight.solver.stepping import simulate
+from thirdlight.thermal import Stack, equilibrium
 
 STEPS_PER_CYCLE = 256
 
 
 def _bridge(spec):
-    """Bridge from a mapping of two device mappings and the topology flag."""
+    """Bridge from a mapping of two device mappings, and each device's Zth beside it."""
     spec = dict(spec)
-    return Bridge(
-        igbt=Switch.from_dict(spec.pop("igbt")),
-        diode=Switch.from_dict(spec.pop("diode")),
+    devices = {kind: dict(spec.pop(kind)) for kind in ("igbt", "diode")}
+    zth = {kind: device.pop("zth", None) for kind, device in devices.items()}
+    bridge = Bridge(
+        igbt=Switch.from_dict(devices["igbt"]),
+        diode=Switch.from_dict(devices["diode"]),
         **spec,
     )
+    return bridge, zth
 
 
 def _driver(spec, frequency):
@@ -65,6 +69,7 @@ class Machine:  # pylint: disable=too-many-instance-attributes
     network: Network
     ladder: secondary.Ladder
     eigen: secondary.Modes
+    thermal: Stack = Stack()
 
     def breakout(self, **air):
         """Breakout functional of the top-node electrode; see :mod:`thirdlight.discharge`."""
@@ -79,6 +84,10 @@ class Machine:  # pylint: disable=too-many-instance-attributes
     def step(self):
         """Nominal integration step, a fixed fraction of the driven period."""
         return 1.0 / (STEPS_PER_CYCLE * self.frequency)
+
+    def temperatures(self, streamer=None, **kwargs):
+        """Settled junction, coil and tank temperatures; see :mod:`thirdlight.thermal`."""
+        return equilibrium(self, streamer, **kwargs)
 
     def streamer(self, **kwargs):
         """Fritz streamer load for this machine, breaking out at the driven frequency.
@@ -112,7 +121,8 @@ class Machine:  # pylint: disable=too-many-instance-attributes
         modes = spec.pop("modes", 2)
         tank = dict(spec.pop("tank"))
         bus = Bus(**spec.pop("bus", {}))
-        bridge = _bridge(spec.pop("bridge"))
+        bridge, zth = _bridge(spec.pop("bridge"))
+        thermal = Stack.from_dict(spec.pop("thermal", {}), **zth)
         driver = spec.pop("driver", {})
         design = Design.from_dict(spec)
         rungs = secondary.ladder(design)
@@ -129,6 +139,7 @@ class Machine:  # pylint: disable=too-many-instance-attributes
             tank=tank,
             bridge=bridge,
             bus=bus,
+            thermal=thermal,
             driver=_driver(driver, eigen.f[0]),
             network=from_modes(
                 eigen,

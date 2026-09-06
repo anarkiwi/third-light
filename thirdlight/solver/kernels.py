@@ -6,6 +6,7 @@ float arrays, and the design indexes the last axis of every packed array.
 """
 
 import math
+from types import FunctionType
 
 from thirdlight.backend import kernel
 from thirdlight.solver.propagator import _SERIES, _SERIES_LIMIT
@@ -15,14 +16,12 @@ SERIES_LIMIT = _SERIES_LIMIT
 _HALVINGS = 60
 
 
-@kernel
 def cexp(re, im):
     """e^(re + i im), as a (real, imaginary) pair."""
     scale = math.exp(re)
     return scale * math.cos(im), scale * math.sin(im)
 
 
-@kernel
 def _coefficient(exp_re, exp_im, z_re, z_im, s, series):
     """s(e^z - 1)/z from an already formed e^z, by series below the crossover."""
     if math.hypot(z_re, z_im) < SERIES_LIMIT:
@@ -40,7 +39,6 @@ def _coefficient(exp_re, exp_im, z_re, z_im, s, series):
     return (num_re * z_re + num_im * z_im) / den, (num_im * z_re - num_re * z_im) / den
 
 
-@kernel
 def phi_one(z_re, z_im, s, series):
     """The held input's coefficient s(e^z - 1)/z, as a (real, imaginary) pair.
 
@@ -51,7 +49,6 @@ def phi_one(z_re, z_im, s, series):
     return _coefficient(exp_re, exp_im, z_re, z_im, s, series)
 
 
-@kernel
 def modal(inv_re, inv_im, x, y_re, y_im, n, d):
     """y = V^-1 x of design ``d``, for real ``x``, into ``y_re``/``y_im``."""
     for i in range(n):
@@ -64,7 +61,6 @@ def modal(inv_re, inv_im, x, y_re, y_im, n, d):
         y_im[i, d] = acc_im
 
 
-@kernel
 def inject(invb_re, invb_im, u, ub_re, ub_im, n, p, d):
     """ub = V^-1 B u of design ``d``, for ``p`` real inputs held over the interval."""
     for i in range(n):
@@ -77,7 +73,6 @@ def inject(invb_re, invb_im, u, ub_re, ub_im, n, p, d):
         ub_im[i, d] = acc_im
 
 
-@kernel
 def row(basis_re, basis_im, c, w_re, w_im, n, d):
     """w = c^T V of design ``d``, for a real functional row ``c``."""
     for j in range(n):
@@ -90,7 +85,6 @@ def row(basis_re, basis_im, c, w_re, w_im, n, d):
         w_im[j, d] = acc_im
 
 
-@kernel
 def advance(lam_re, lam_im, y_re, y_im, ub_re, ub_im, s, series, out_re, out_im, n, d):
     """y(s) = e^(lam s) y + phi1(lam, s) ub of design ``d``, into ``out_re``/``out_im``."""
     for i in range(n):
@@ -112,7 +106,6 @@ def advance(lam_re, lam_im, y_re, y_im, ub_re, ub_im, s, series, out_re, out_im,
         )
 
 
-@kernel
 def restore(basis_re, basis_im, y_re, y_im, x, n, d):
     """x = Re(V y) of design ``d``, into real ``x``."""
     for i in range(n):
@@ -122,7 +115,6 @@ def restore(basis_re, basis_im, y_re, y_im, x, n, d):
         x[i, d] = acc
 
 
-@kernel
 def value(lam_re, lam_im, w_re, w_im, y_re, y_im, ub_re, ub_im, s, series, n, d):
     """Re(w . (e^(lam s) y + phi1 ub)) of design ``d``: the functional at sub-step ``s``.
 
@@ -151,7 +143,6 @@ def value(lam_re, lam_im, w_re, w_im, y_re, y_im, ub_re, ub_im, s, series, n, d)
     return total
 
 
-@kernel
 def bisect(
     lam_re,
     lam_im,
@@ -207,3 +198,53 @@ def bisect(
         else:
             high = mid
     return 0.5 * (low + high)
+
+
+_SOURCES = (
+    cexp,
+    _coefficient,
+    phi_one,
+    modal,
+    inject,
+    row,
+    advance,
+    restore,
+    value,
+    bisect,
+)
+
+
+def build(compile_):
+    """Compile the sources for one target, each bound to that target's own siblings.
+
+    A device function cannot call an ``njit`` dispatcher, so the call tree is
+    built once per target: every source is rebound onto a globals dict carrying
+    the siblings compiled before it, in dependency order.
+    """
+    scope = {
+        "__name__": __name__,
+        "__file__": __file__,
+        "math": math,
+        "SERIES_LIMIT": SERIES_LIMIT,
+        "_HALVINGS": _HALVINGS,
+    }
+    built = {}
+    for func in _SOURCES:
+        rebound = FunctionType(
+            func.__code__, scope, func.__name__, func.__defaults__, func.__closure__
+        )
+        scope[func.__name__] = built[func.__name__] = compile_(rebound)
+    return built
+
+
+CPU = build(kernel)
+cexp = CPU["cexp"]
+_coefficient = CPU["_coefficient"]
+phi_one = CPU["phi_one"]
+modal = CPU["modal"]
+inject = CPU["inject"]
+row = CPU["row"]
+advance = CPU["advance"]
+restore = CPU["restore"]
+value = CPU["value"]
+bisect = CPU["bisect"]

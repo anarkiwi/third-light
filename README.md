@@ -49,6 +49,21 @@ losses.switching.total            # commutation energy, additive to it
 ```
 
 ```python
+from scipy.optimize import differential_evolution
+
+from thirdlight import batch
+
+frame = batch.sweep(spec, {"top_load.major_radius": [0.14, 0.15, 0.16],
+                           "tank.tune": [0.95, 1.0, 1.05]}, workers=4)
+frame.to_xarray()                     # the same, as a labelled cube
+frame["frequency"]                    # per point; an infeasible point is NaN
+
+obj = batch.objective(spec, {"primary.turns": (4.0, 8.0)},
+                      lambda m: abs(m.frequency - 3.0e5))
+differential_evolution(obj, obj.bounds)   # or an Optuna trial over obj.names
+```
+
+```python
 from thirdlight.solver import batched
 
 packed = batched.pack([machine, other, third])   # design-major, one dtype
@@ -95,8 +110,10 @@ Medhurst proximity correction, the bridge, driver and exponential integrator,
 breakout, the streamer load and its length dynamics, switching-energy and
 component-resolved loss extraction, the Foster/Cauer thermal networks,
 junction temperature and settled interrupter cycle that consume it, and the
-schema round trip, labelled output and plots (roadmap phases 1, 1a, 2, 3 and 4).
-Batched GPU sweeps are not yet built.
+schema round trip, labelled output, plots, design-space sweeps and the optimiser
+glue, and the batched stepper on both targets (roadmap phases 1, 1a, 2, 3, 4 and
+5). Phase 6 -- DBM streamer geometry, acoustics, JavaTC import and 3D
+visualisation -- is not built.
 
 ## Test
 

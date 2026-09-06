@@ -18,13 +18,28 @@ for _var in (
 JIT_DISABLED = os.environ.get("NUMBA_DISABLE_JIT") == "1"
 
 
-def pytest_collection_modifyitems(config, items):
-    """Skip large-size tests when Numba is interpreted, which is ~10^3x slower.
+def _cuda_available():
+    """Whether a CUDA device is present, without importing CuPy."""
+    try:
+        from numba import cuda  # pylint: disable=import-outside-toplevel
 
-    Their code paths are covered by the small-size tests, so the coverage pass
-    loses nothing by dropping them.
+        return cuda.is_available()
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip what this host cannot run: device tests without a device, slow tests interpreted.
+
+    The ``slow`` code paths are covered by the small-size tests, so the coverage
+    pass loses nothing by dropping them; ``cuda`` needs hardware.
     """
     del config
+    if not _cuda_available():
+        needs_device = pytest.mark.skip(reason="no CUDA device")
+        for item in items:
+            if "cuda" in item.keywords:
+                item.add_marker(needs_device)
     if not JIT_DISABLED:
         return
     skip = pytest.mark.skip(reason="NUMBA_DISABLE_JIT=1: too slow interpreted")

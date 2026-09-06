@@ -7,11 +7,13 @@ from dataclasses import replace
 import numpy as np
 import pytest
 import yaml
+from numba import cuda
 
+from thirdlight import backend
 from thirdlight.circuit import with_streamer
 from thirdlight.control import Driver, Interrupter, PhaseLead
 from thirdlight.machine import Machine
-from thirdlight.solver import batched
+from thirdlight.solver import batched, kernels
 from thirdlight.solver.batched import (  # pylint: disable=protected-access
     _edge_time,
     _fire,
@@ -28,6 +30,8 @@ STEP = Machine.from_dict(SPEC).step
 RESERVOIR = {"capacitance": 1.0e-6, "resistance": 0.2}
 TINY = 160
 LONG = 1200
+SOURCES = [f.__name__ for f in batched._SOURCES]  # pylint: disable=protected-access
+KERNELS = [f.__name__ for f in kernels._SOURCES]  # pylint: disable=protected-access
 
 
 def machine(driver=None, **changes):
@@ -247,3 +251,48 @@ def test_the_gate_queue_reproduces_the_sequencer():
         )
         assert gate == seq.gate
         assert (t0 if count > 0 else math.inf) == seq.next_time()
+
+
+def test_build_compiles_each_source_once_over_the_kernels():
+    """Every source is compiled once, after its kernels, seeing those built before it."""
+    order = []
+
+    def record(func):
+        assert func.__name__ not in func.__globals__
+        assert all(name in func.__globals__ for name in order)
+        order.append(func.__name__)
+        return func
+
+    built = batched.build(record)
+    assert order == KERNELS + SOURCES
+    assert sorted(built) == sorted(SOURCES)
+    assert set(KERNELS) <= set(built["_step_design"].__globals__)
+
+
+def test_the_device_build_constructs_without_a_gpu():
+    """The one source binds for the CUDA target with no driver present."""
+    built = batched.build(backend.device)
+    assert sorted(built) == sorted(SOURCES)
+    assert all(isinstance(f, cuda.dispatcher.CUDADispatcher) for f in built.values())
+
+
+@pytest.mark.cuda
+def test_the_cuda_run_matches_the_cpu_run(monkeypatch):
+    """One batch through both targets: same observables, same shapes and dtypes."""
+    packed = batched.pack(spread())
+    duration = TINY * STEP
+    monkeypatch.setenv("THIRDLIGHT_BACKEND", "cpu")
+    expected = batched.run(packed, duration)
+    monkeypatch.setenv("THIRDLIGHT_BACKEND", "cuda")
+    got = batched.run(packed, duration)
+    assert np.array_equal(got.steps, expected.steps)
+    for name in (
+        "peak_current",
+        "peak_voltage",
+        "input_energy",
+        "dissipation",
+        "state",
+    ):
+        mine, theirs = getattr(got, name), getattr(expected, name)
+        assert mine.shape == theirs.shape and mine.dtype == theirs.dtype
+        assert mine == pytest.approx(theirs)

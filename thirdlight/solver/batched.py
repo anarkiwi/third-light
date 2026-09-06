@@ -12,12 +12,15 @@ a kernel, complex data is carried as separate real and imaginary arrays, and the
 design indexes the last axis.
 """
 
+import functools
 import math
 from dataclasses import dataclass
+from types import FunctionType
 
 import numpy as np
 import numba
 
+from thirdlight import backend
 from thirdlight.backend import kernel
 from thirdlight.circuit.devices import STATES, polarity
 from thirdlight.control.interrupter import Interrupter
@@ -34,6 +37,7 @@ _XTOL = 1e-14
 _GATES = (-1, 0, 1)
 _SIGNS = (-1.0, 0.0, 1.0)
 _WORK = 11
+_BLOCK = 64
 
 
 @dataclass(frozen=True)
@@ -218,7 +222,6 @@ def pack(machines, dtype=np.float64, load=None):
     )
 
 
-@kernel
 def _edge_time(edge, period, on_time, duration):
     """Time of interrupter edge ``edge``, or infinity once it passes ``duration``.
 
@@ -229,7 +232,6 @@ def _edge_time(edge, period, on_time, duration):
     return when if when <= duration else math.inf
 
 
-@kernel
 def _supply(t, burst_start, bus, initial, final, rise, ramped):
     """Supply voltage at ``t``, from the ramp measured since the burst start."""
     if not ramped:
@@ -239,7 +241,6 @@ def _supply(t, burst_start, bus, initial, final, rise, ramped):
     return initial + (final - initial) * min(max((t - burst_start) / rise, 0.0), 1.0)
 
 
-@kernel
 def _fire(t, gate, count, t0, g0, t1, g1):
     """Apply every queued gate transition due at or before ``t``."""
     while count > 0 and t0 <= t:
@@ -249,7 +250,6 @@ def _fire(t, gate, count, t0, g0, t1, g1):
     return gate, count, t0, g0, t1, g1
 
 
-@kernel
 def _queue(t, sign, gate, count, t0, g0, t1, g1, delay, dead):
     """Queue a comparator crossing to ``sign``, superseding any stale command.
 
@@ -272,7 +272,6 @@ def _queue(t, sign, gate, count, t0, g0, t1, g1, delay, dead):
     return 1, due, target, math.inf, 0
 
 
-@kernel
 def _conduction(a0, b0, rows, offsets, x, u, gate, size, inputs, d):
     """Polarity a blocked bridge starts to conduct with, or 0 while it stays blocked.
 
@@ -293,8 +292,7 @@ def _conduction(a0, b0, rows, offsets, x, u, gate, size, inputs, d):
     return 0.0
 
 
-@kernel
-def _step_design(  # pylint: disable=too-many-branches,too-many-statements
+def _step_design(  # pylint: disable=too-many-branches,too-many-statements,undefined-variable
     lam_re,
     lam_im,
     basis_re,
@@ -349,7 +347,7 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
     sign_i, sign_fb, t = 0.0, 0.0, 0.0
     peak_i, peak_v, drawn, lost, taken = 0.0, 0.0, 0.0, 0.0, 0
     sampled = False
-    left, drop_l, swing_l, row_l = 0.0, 0.0, 0.0, 0
+    left, drop_l, swing_l, switch_l = 0.0, 0.0, 0.0, 0
     while True:
         gate, count, t0, g0, t1, g1 = _fire(t, gate, count, t0, g0, t1, g1)
         due = math.inf
@@ -368,7 +366,7 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
         if sign_i == 0.0:
             sign_i = _conduction(a0, b0, rows, offsets, x, u, gate, size, inputs, d)
         si = int(sign_i) + 1
-        row = int(rows[gate + 1, si, d])
+        switch = int(rows[gate + 1, si, d])
         u[0, d] = offsets[gate + 1, si, d]
         current = x[0, d]
         top = 0.0
@@ -383,7 +381,7 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
             lost -= drop_l * mean * width
             for k in range(loops):
                 lost += (
-                    resist[row_l, k, d]
+                    resist[switch_l, k, d]
                     * 0.5
                     * (prev[k, d] * prev[k, d] + x[k, d] * x[k, d])
                     * width
@@ -391,8 +389,8 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
             taken += 1
         for i in range(size):
             prev[i, d] = x[i, d]
-        sampled, left, drop_l, row_l = True, t, u[0, d], row
-        swing_l = sigma[row] * gain * (x[2 * loops, d] if reservoir else supply)
+        sampled, left, drop_l, switch_l = True, t, u[0, d], switch
+        swing_l = sigma[switch] * gain * (x[2 * loops, d] if reservoir else supply)
         if t >= duration:
             break
         limit = min(t + step, duration, due)
@@ -400,27 +398,27 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
             limit = min(limit, t0)
         span = min(limit - t, step)
         if span <= 0.0:
-            t = np.nextafter(t, math.inf)
+            t = nextafter(t, math.inf)
             continue
-        kernels.modal(inverse_re[row], inverse_im[row], x, y_re, y_im, size, d)
-        kernels.inject(inject_re[row], inject_im[row], u, ub_re, ub_im, size, inputs, d)
+        modal(inverse_re[switch], inverse_im[switch], x, y_re, y_im, size, d)
+        inject(inject_re[switch], inject_im[switch], u, ub_re, ub_im, size, inputs, d)
         offset = 0.0
         for j in range(inputs):
-            offset += b0[row, j, d] * u[j, d]
+            offset += b0[switch, j, d] * u[j, d]
         offset *= tau
         start = offset
         for i in range(size):
-            lead[i, d] = tau * a0[row, i, d] + (1.0 if i == 0 else 0.0)
+            lead[i, d] = tau * a0[switch, i, d] + (1.0 if i == 0 else 0.0)
             start += lead[i, d] * x[i, d]
-        kernels.row(basis_re[row], basis_im[row], lead, w_re, w_im, size, d)
+        row(basis_re[switch], basis_im[switch], lead, w_re, w_im, size, d)
         tol = span * _XTOL
         hit_i = math.inf
         if sign_i != 0.0:
-            hit_i = kernels.bisect(
-                lam_re[row],
-                lam_im[row],
-                basis_re[row, 0],
-                basis_im[row, 0],
+            hit_i = bisect(
+                lam_re[switch],
+                lam_im[switch],
+                basis_re[switch, 0],
+                basis_im[switch, 0],
                 y_re,
                 y_im,
                 ub_re,
@@ -435,9 +433,9 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
                 d,
             )
         if sign_fb != 0.0:
-            hit_fb = kernels.bisect(
-                lam_re[row],
-                lam_im[row],
+            hit_fb = bisect(
+                lam_re[switch],
+                lam_im[switch],
                 w_re,
                 w_im,
                 y_re,
@@ -463,9 +461,9 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
                     span = min(span, t0 - t)
         first = min(span, hit_i)
         if first > 0.0:
-            kernels.advance(
-                lam_re[row],
-                lam_im[row],
+            advance(
+                lam_re[switch],
+                lam_im[switch],
                 y_re,
                 y_im,
                 ub_re,
@@ -477,7 +475,7 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
                 size,
                 d,
             )
-            kernels.restore(basis_re[row], basis_im[row], out_re, out_im, x, size, d)
+            restore(basis_re[switch], basis_im[switch], out_re, out_im, x, size, d)
         t += first
         if first == hit_i:
             sign_i = 0.0
@@ -492,6 +490,56 @@ def _step_design(  # pylint: disable=too-many-branches,too-many-statements
     steps[d] = taken
     for i in range(size):
         state[i, d] = x[i, d]
+
+
+_SOURCES = (_edge_time, _supply, _fire, _queue, _conduction, _step_design)
+
+
+def build(compile_):
+    """Compile the stepper sources for one target, over that target's own kernels.
+
+    Same rebinding as :func:`thirdlight.solver.kernels.build`, with the scope
+    seeded from the kernel set built for the same target.
+    """
+    scope = kernels.build(compile_)
+    scope.update(backend.primitives(compile_))
+    scope.update(
+        {
+            "__name__": __name__,
+            "__file__": __file__,
+            "math": math,
+            "STEP": STEP,
+            "GAIN": GAIN,
+            "TAU": TAU,
+            "DELAY": DELAY,
+            "DEAD": DEAD,
+            "BUS": BUS,
+            "ON_TIME": ON_TIME,
+            "PERIOD": PERIOD,
+            "INITIAL": INITIAL,
+            "FINAL": FINAL,
+            "RISE": RISE,
+            "GATED": GATED,
+            "RAMPED": RAMPED,
+            "_XTOL": _XTOL,
+        }
+    )
+    built = {}
+    for func in _SOURCES:
+        rebound = FunctionType(
+            func.__code__, scope, func.__name__, func.__defaults__, func.__closure__
+        )
+        scope[func.__name__] = built[func.__name__] = compile_(rebound)
+    return built
+
+
+CPU = build(kernel)
+_edge_time = CPU["_edge_time"]
+_supply = CPU["_supply"]
+_fire = CPU["_fire"]
+_queue = CPU["_queue"]
+_conduction = CPU["_conduction"]
+_step_design = CPU["_step_design"]
 
 
 @numba.njit(parallel=True, cache=True)
@@ -556,18 +604,99 @@ def _run_batch(
         )
 
 
+@functools.lru_cache(maxsize=1)
+def _run_grid():
+    """The CUDA launch kernel over the device build, one thread per design."""
+    from numba import cuda  # pylint: disable=import-outside-toplevel
+
+    step_design = build(backend.device)["_step_design"]
+
+    @cuda.jit
+    def grid(
+        lam_re,
+        lam_im,
+        basis_re,
+        basis_im,
+        inverse_re,
+        inverse_im,
+        inject_re,
+        inject_im,
+        a0,
+        b0,
+        resist,
+        rows,
+        offsets,
+        drive,
+        sigma,
+        series,
+        size,
+        loops,
+        inputs,
+        reservoir,
+        duration,
+        work,
+        u,
+        totals,
+        steps,
+        state,
+    ):
+        """Step the design this thread indexes, if the grid overhangs the batch."""
+        d = cuda.grid(1)  # pylint: disable=no-value-for-parameter
+        if d < work.shape[2]:
+            step_design(
+                lam_re,
+                lam_im,
+                basis_re,
+                basis_im,
+                inverse_re,
+                inverse_im,
+                inject_re,
+                inject_im,
+                a0,
+                b0,
+                resist,
+                rows,
+                offsets,
+                drive,
+                sigma,
+                series,
+                size,
+                loops,
+                inputs,
+                reservoir,
+                duration,
+                work,
+                u,
+                totals,
+                steps,
+                state,
+                d,
+            )
+
+    return grid
+
+
+def _on_device(constants, scratch):
+    """Run the batch on the GPU, returning host copies of the scratch buffers."""
+    from numba import cuda  # pylint: disable=import-outside-toplevel
+
+    moved = tuple(
+        cuda.to_device(a) if isinstance(a, np.ndarray) else a for a in constants
+    )
+    buffers = tuple(cuda.to_device(a) for a in scratch)
+    blocks = (scratch[0].shape[2] + _BLOCK - 1) // _BLOCK
+    _run_grid()[blocks, _BLOCK](*moved, *buffers)
+    return tuple(b.copy_to_host() for b in buffers)
+
+
 def run(packed, duration):
-    """Step every design of ``packed`` for ``duration`` seconds.
+    """Step every design of ``packed`` for ``duration`` seconds, on the active backend.
 
     The scratch is allocated once for the batch and indexed by design, so the
     kernel itself allocates nothing.
     """
     designs = packed.designs
-    work = np.zeros((_WORK, packed.size, designs), dtype=packed.dtype)
-    totals = np.zeros((4, designs))
-    steps = np.zeros(designs, dtype=np.int64)
-    state = np.zeros((packed.size, designs))
-    _run_batch(
+    constants = (
         packed.lam_re,
         packed.lam_im,
         packed.basis_re,
@@ -589,12 +718,19 @@ def run(packed, duration):
         packed.inputs,
         packed.reservoir,
         float(duration),
-        work,
-        np.zeros((packed.inputs, designs), dtype=packed.dtype),
-        totals,
-        steps,
-        state,
     )
+    scratch = (
+        np.zeros((_WORK, packed.size, designs), dtype=packed.dtype),
+        np.zeros((packed.inputs, designs), dtype=packed.dtype),
+        np.zeros((4, designs)),
+        np.zeros(designs, dtype=np.int64),
+        np.zeros((packed.size, designs)),
+    )
+    if backend.selected() == "cuda":
+        scratch = _on_device(constants, scratch)
+    else:
+        _run_batch(*constants, *scratch)
+    _, _, totals, steps, state = scratch
     return Batched(
         peak_current=totals[0],
         peak_voltage=totals[1],

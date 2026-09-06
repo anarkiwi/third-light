@@ -65,3 +65,15 @@ def device(func):
     from numba import cuda  # pylint: disable=import-outside-toplevel
 
     return cuda.jit(device=True, inline=True)(getattr(func, "py_func", func))
+
+
+def primitives(compile_):
+    """Intrinsics the shared kernel sources call by name, bound to ``compile_``'s target.
+
+    ``numpy.nextafter`` has no CUDA typing, so the device build takes libdevice's.
+    """
+    if compile_ is device:
+        from numba.cuda import libdevice  # pylint: disable=import-outside-toplevel
+
+        return {"nextafter": libdevice.nextafter}
+    return {"nextafter": np.nextafter}

@@ -37,6 +37,7 @@ detailed plasma chemistry.
 | Streamer geometry (phase 6) | Dielectric breakdown model, growth probability ∝ φ^η, fast Laplacian growth on GPU; segment charges feed back into C matrix | NPW [18], Kim et al. [19] |
 | Semiconductor thermal | E_on(I,Tj), E_off(I,Tj), E_rr polynomial fits from datasheet; conduction ∫Vce·I dt; Foster or Cauer rungs from junction to case to sink to ambient, exact-exponential between bursts | [20], [21] |
 | Acoustics | Thermoacoustic simple source: the far-field pressure is the time derivative of the channel dissipation, delayed and 1/r | Teraguchi [22] |
+| Coil pairs | Two coils solved on their own axisymmetric problems and coupled at their top electrodes alone: each electrode a point charge at its charge-weighted centroid, one mutual potential coefficient with its ground-plane image, and the two-node Maxwell capacitance the coupled modes come out of | Maxwell coefficients as §3.1, tssp [3], Voitkāns [7] |
 
 ## 3. Numerical core
 
@@ -657,6 +658,57 @@ offset at once. A fixed PRF then puts the spectrum exactly on the PRF comb and a
 `Melody` puts each note span on its own, which is what §5 checks. Output is
 normalised 16-bit mono PCM through the standard library's `wave`.
 
+### 3.8 Two coils standing side by side
+
+A pair of towers is not one axisymmetric problem, but at the separations one is
+built at it is two: neither tower perturbs the other's own solve, so the pair is
+the two single-coil solves of §3.1 plus one coupling term, taken at the top node
+because that is where essentially all of a grounded quarter-wave resonator's
+charge sits.
+
+The top electrode reduces to a point charge at the charge-weighted centroid
+height of its own unit-potential solve. Two such charges at separation s and
+heights h_a, h_b have the mutual potential coefficient
+
+    p12 = (1/sqrt(s^2 + (h_a - h_b)^2) - 1/sqrt(s^2 + (h_a + h_b)^2)) / 4 pi eps0
+
+whose second term is the ground plane's image of the other electrode, screening
+the coupling by s/2h where there is a plane and absent where there is not. That
+is the leading order in electrode size over separation. It omits the electrodes'
+own multipoles, second order in a/s against it, and it carries no inductive
+coupling between the two windings at all: the near field of a grounded
+quarter-wave resonator is dominantly electric at the top, and the windings'
+mutual inductance is far weaker at these separations than the electrodes' mutual
+capacitance.
+
+P = [[1/c_a, p12], [p12, 1/c_b]] over the two coils' mode-1 top-referred modal
+capacitances closes the network. C = P^-1 is the Maxwell capacitance matrix, its
+off-diagonal the mutual capacitance -C[0,1], and with the modal inductances to
+ground the pair's two resonances are diag(1/l_a, 1/l_b) v = omega^2 C v. Scaled
+by diag(sqrt(l_a), sqrt(l_b)) that is a standard symmetric problem, whose
+eigenvectors are orthonormal in the tower basis and so measure directly how much
+of each mode sits on each tower, where the generalised solve's vectors are
+normalised to unit modal energy instead.
+
+Two numbers place a pair: the detune |f_a - f_b| over the mean of the two
+isolated frequencies, and the coupling -C[0,1] / sqrt(C_00 C_11), which for
+identical coils is the fractional mode splitting to leading order. The splitting
+is the two-level sqrt(detune^2 + coupling^2), so the mixing angle turns on their
+ratio alone: the modes delocalise over both towers once the coupling exceeds the
+detune and localise one to a tower once it does not, which is the locking
+criterion, and the participation ratio 1/sum(v^4) crosses 4/3 at that threshold.
+
+The in-phase mode drives no current through the mutual capacitance, but it does
+not sit at the isolated f0 either: two electrodes held at the same potential
+screen one another, so the in-phase branch of C^-1 is c/(1 + c p12) rather than
+c and the mode lifts above f0 by as much as the antiphase mode falls below it, to
+first order. The lumped picture that holds each branch capacitance fixed misses
+that screening; the two agree on the splitting, which is what a pair is tuned by.
+
+A pair driven in antiphase bridges the sum of the two coils' reaches to ground,
+those being the settled lengths of §3.4: the gap sees the sum of the two terminal
+voltages, so each channel need only cover its own coil's reach.
+
 ## 4. Package layout
 
 ```
@@ -674,6 +726,7 @@ thirdlight/
   solver/          expm precompute, event stepping, CUDA and CPU kernels
   batch.py         design-space expansion, sweep runner, Optuna/scipy objective glue
   acoustics.py     thermoacoustic simple source, burst rendering, WAV output
+  pair.py          two coils side by side: electrode coupling and the coupled modes
   io/              YAML design schema round trip, xarray/parquet output
   viz/             waveform, mode-shape, field and streamer plots
 ```
@@ -772,6 +825,14 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Melody pitch | each note span's dominant bin against `note_frequency` | exact |
 | Burst placement | the scatter-add against a per-burst loop, interrupter and melody | 1e-12 rel |
 | Spark WAV | the samples read back through `wave` against the normalised waveform | the int16 step |
+| Electrode centroid | the sphere's own centre with no ground plane, and below it with one | 1e-12 rel; the shift signed |
+| Two-tower mutual capacitance | the far-field two-sphere 4 pi eps0 a_a a_b / s | second order in a/s: 6.7e-3, 6.7e-5, 6.7e-7 at s/a = 10, 100, 1000, on that order to 1 % |
+| Ground-plane screening | strictly weaker coupling with a plane; the free-space limit far above it | first order in s/2h, to (s/2h)^2 |
+| Identical-coil split | f0 sqrt(1 +- c p12), and f_anti = f_in / sqrt(1 + 2 c_mutual / c_ground) | 1e-12 rel, lands at rounding |
+| Uncoupled pair | C exactly diagonal at p12 = 0, and the two isolated frequencies | exact; 1e-15 through the eigen-solve's sqrt round trip |
+| Avoided crossing | sqrt(detune^2 + coupling^2) over a detune sweep at fixed coupling | second order in the coupling: 2e-6 at 0.002, 2e-4 at 0.02 |
+| Mode localisation | the participation ratio's 4/3 crossing against the locking criterion | agree outside 1e-3 of the threshold |
+| Pair symmetry and monotonicity | the split under a swap of the two coils; mutual capacitance and splitting against separation | 1e-12 rel; monotone |
 
 ## 6. Engineering constraints
 
@@ -843,6 +904,11 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    constructs. What is left to the `cuda` job is the PTX compile and the launch,
    since compiling a device call tree needs a driver.
 6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
+7. Two coils side by side. Done; §3.8. A pair is two single-coil solves and one
+   potential coefficient rather than a new geometry, because at the separations
+   a pair is built at neither tower perturbs the other's own axisymmetric
+   problem, and the detune and the coupling it reduces to are what say whether
+   the two towers lock and how far the antiphase pair reaches.
 
 ## 8. Existing tools surveyed
 

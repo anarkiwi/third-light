@@ -21,6 +21,8 @@ All lengths are metres, measured from the ground plane at z = 0.
 | `top_load.minor_radius` | toroid tube radius |
 | `top_load.radius` | sphere radius |
 | `top_load.height` | height of the top-load centre |
+| `breakout.radius` | breakout point tip radius; the point is a sphere on the top node |
+| `breakout.height` | height of the tip centre, clear of the top load |
 | `former.outer_radius` | winding former outer radius; the wire sits outside it |
 | `former.inner_radius` | bore radius, 0 for a solid rod |
 | `former.length` | axial length of the former |
@@ -29,6 +31,7 @@ All lengths are metres, measured from the ground plane at z = 0.
 | `ground_plane` | image a conducting plane at z = 0 |
 | `sections` | secondary ring sections, 50–400 |
 | `top_load_sections` | rings around the top-load surface |
+| `breakout_sections` | rings around the breakout point |
 | `former_sections` | bands around the former's closed meridian contour |
 
 `thirdlight.geometry.Design.from_yaml` reads the keys above. A file that also

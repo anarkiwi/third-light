@@ -44,8 +44,8 @@ detailed plasma chemistry.
 
 1. Discretise secondary into N sections (N = 50–400), each a ring at radius
    a_k, height z_k, carrying n_k turns. Primary: one ring per turn (flat spiral,
-   helical, conical). Top load: toroid surface as rings; breakout point as a
-   thin-wire charge segment.
+   helical, conical). Top load: toroid or sphere surface as rings; breakout
+   point as a small sphere on the same node.
 2. L matrix: L_ij = n_i n_j M_ring(a_i, a_j, |z_i − z_j|) using
    M = μ0 √(a_i a_j) [(2/κ − κ) K(κ) − (2/κ) E(κ)]; diagonal via Lyle/Rayleigh
    self-inductance of a finite-width ring. K, E via AGM in a Numba CUDA
@@ -241,9 +241,27 @@ failure mode is geometric: P loses positive definiteness when rings overlap
 (conductor radius above the ring spacing), which surfaces as a Cholesky error
 rather than silent error.
 
-### 3.4 Streamer length dynamics
+### 3.4 Breakout and streamer length dynamics
 
-Per bang: breakout when the top-load surface field exceeds the Peek
+The surface field is linear in the state the integrator already carries, so no
+part of the MoM is re-entered per step. Ring potentials are the modal shapes
+scaled by the modal top-node voltages, ring charges are the potential solve
+applied to those, and Gauss at a conductor turns charge into field; the chain
+collapses to one (electrode rings x modes) matrix built once per design, against
+which Peek's threshold is evaluated per ring at its own component's curvature.
+The breakout point is a sphere on the end of a stalk, tied to the top node with
+the top load; the stalk carries far less field than the tip and is left out.
+
+That field needs one correction. A sphere's polar band is a disc rather than a
+ring -- its radius is half its width at every section count -- so the ring model
+puts 10.6 % too little charge on it, and refining the sphere only makes a smaller
+cap of the same shape. An isolated sphere's field is uniform and known, so the
+sphere's own solve calibrates the error, which is local: applied to a breakout
+point mounted over a coil the corrected coarse pole field lands within 0.02 % of
+the refined solution, against 10.6 % low without it. A toroid's bands are all
+slender and need nothing.
+
+Per bang: breakout when the electrode surface field exceeds the Peek
 threshold; while broken out, ℓ grows at a rate proportional to the excess of
 top voltage over the channel-sustaining voltage, decays between bangs with a
 channel-cooling time constant that decreases with PRF. Load is Fritz
@@ -291,6 +309,9 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Solenoid f_res | tssp measured air-cored coils [3] | f1 within 4 % rms, overtones within 2 % rms |
 | Solenoid inductance | Denicolai's measured 80.22 mH on Thor [1] | 1.5 %, the derived-geometry spread |
 | Coupling k | acmi | 1 % |
+| Peek critical field | uniform-field limit as the electrode grows | 0.1 % |
+| Sphere surface field | uniform on an isolated sphere, once corrected | 1e-9 rel |
+| Electrode field functional | a direct potential solve at the same modal state | 1e-11 rel |
 | Lumped 4th-order DRSSTC transient | every constant-mode interval against `scipy.integrate.solve_ivp` DOP853 at rtol 1e-13 | 1e-9 rel |
 | Complete energy transfer | de Queiroz integer mode ratios [5]; achievable only when n - m is odd, so (3,2) and (5,4), not (5,3) | 1e-6 of the initial energy |
 | Phase-lead/ZCS behaviour | gate edges on the current zero crossings with no delay; tau = tan(omega t_d)/omega restores them | 5 % of the gate delay |

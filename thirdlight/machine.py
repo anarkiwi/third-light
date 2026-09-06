@@ -13,6 +13,7 @@ import yaml
 from thirdlight import secondary
 from thirdlight.circuit import Bridge, Bus, Network, Switch, Tank, from_modes, tune
 from thirdlight.control import Driver, Interrupter, Melody, PhaseLead, Ramp
+from thirdlight.discharge import breakout
 from thirdlight.em import inductance, losses
 from thirdlight.geometry import Design
 from thirdlight.solver.stepping import simulate
@@ -51,7 +52,7 @@ def _driver(spec, frequency):
 
 
 @dataclass(frozen=True)
-class Machine:
+class Machine:  # pylint: disable=too-many-instance-attributes
     """A coil and its drive electronics, with the state space they form."""
 
     design: Design
@@ -60,6 +61,12 @@ class Machine:
     bus: Bus
     driver: Driver
     network: Network
+    ladder: secondary.Ladder
+    eigen: secondary.Modes
+
+    def breakout(self, **air):
+        """Breakout functional of the top-node electrode; see :mod:`thirdlight.discharge`."""
+        return breakout.from_modes(self.design, self.ladder, self.eigen, **air)
 
     @property
     def frequency(self):
@@ -87,7 +94,8 @@ class Machine:
         bridge = _bridge(spec.pop("bridge"))
         driver = spec.pop("driver", {})
         design = Design.from_dict(spec)
-        eigen = secondary.resonance(design, modes=modes)
+        rungs = secondary.ladder(design)
+        eigen = secondary.eigenmodes(rungs, modes)
         primary = float(inductance.inductance_matrix(design.primary_rings()).sum())
         ratio = tank.pop("tune", None)
         if ratio is not None:
@@ -95,6 +103,8 @@ class Machine:
         tank = Tank(**tank)
         return cls(
             design=design,
+            ladder=rungs,
+            eigen=eigen,
             tank=tank,
             bridge=bridge,
             bus=bus,

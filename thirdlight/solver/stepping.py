@@ -7,6 +7,7 @@ state, so their crossings are located inside the step rather than quantised to i
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from scipy.optimize import brentq
@@ -21,7 +22,12 @@ _XTOL = 1e-14
 
 @dataclass(frozen=True)
 class Result:  # pylint: disable=too-many-instance-attributes
-    """Time history of a run, sampled at every step boundary and switching instant."""
+    """Time history of a run, sampled at every step boundary and switching instant.
+
+    ``channel_state`` is the channel model's own state where the run had one: a
+    length for the scalar model and the surviving tree for a grown one, which is
+    what the next burst carries over.
+    """
 
     t: np.ndarray
     x: np.ndarray
@@ -33,6 +39,7 @@ class Result:  # pylint: disable=too-many-instance-attributes
     channel: np.ndarray
     loss: np.ndarray
     resistance: np.ndarray | None = None
+    channel_state: Any = None
 
     def __len__(self):
         return len(self.t)
@@ -416,4 +423,5 @@ def simulate(  # pylint: disable=too-many-statements
         channel=np.array(channels),
         loss=np.array(losses),
         resistance=np.array(ohmic),
+        channel_state=channel.state,
     )

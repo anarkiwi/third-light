@@ -110,6 +110,11 @@ class TreeChannel:  # pylint: disable=too-many-instance-attributes
         """
         return self.floor / (2.0 * math.pi * self.frequency * self.resistance)
 
+    @property
+    def resolution(self):
+        """Seed length a burst cannot tell from none, which is one growth step."""
+        return self.growth.step
+
     def admittance(self, resistance, capacitance):
         """Branch admittance as a fraction of its own 1 / R, omega R C.
 

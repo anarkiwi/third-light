@@ -422,7 +422,7 @@ def equilibrium(
         spans, joules = energies(result, count, junction, interrupter.on_time)
         settled = steady(model, spans, joules, gap, rest)
         if streamer is not None:
-            length = float(result.length[-1] * math.exp(-gap / streamer.cooling))
+            length = streamer.advance(result.channel_state, 0.0, 0.0, gap)
         after = {port: settled.burst[port] for port in FEEDBACK}
         if hot is not None:
             if _converged(hot, after, model.ambient, rtol):

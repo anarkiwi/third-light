@@ -1,4 +1,4 @@
-"""Waveform, mode-shape, field, streamer, loss and temperature plots."""
+"""Waveform, mode-shape, field, streamer, channel, loss and temperature plots."""
 
 # The config directory has to be writable before matplotlib is imported, and the
 # backend chosen before pyplot binds one, so the imports follow the setup.
@@ -20,9 +20,12 @@ import pytest
 import yaml
 
 from thirdlight import viz
+from thirdlight.discharge import Growth
 from thirdlight.machine import Machine
+from thirdlight.viz.plots import RING_POINTS
 
 TJ = 110.0
+SPATIAL = ("channel",)
 
 with open("examples/drsstc.yaml", encoding="utf-8") as _handle:
     SPEC = yaml.safe_load(_handle)
@@ -46,6 +49,17 @@ def fixture_result(machine):
     return machine.run(6e-6, streamer=channel, length0=0.05)
 
 
+@pytest.fixture(name="grown", scope="module")
+def fixture_grown(machine):
+    """A channel grown off the electrode at a held top voltage, by the growth clock."""
+    model = machine.channel(Growth(step=0.02, radius=1.0e-3), rng=0)
+    voltage = 3.0e5
+    span = 12.0 * model.growth.step / (model.velocity * voltage)
+    state = model.advance(model.initial(0.0), voltage, 1.0, span)
+    assert state.tree.segments > 1
+    return state
+
+
 @pytest.fixture(name="settled", scope="module")
 def fixture_settled(machine):
     """The settled interrupter cycle, the slowest object the plots consume."""
@@ -53,7 +67,7 @@ def fixture_settled(machine):
 
 
 @pytest.fixture(name="plots", scope="module")
-def fixture_plots(machine, result, settled):
+def fixture_plots(machine, result, grown, settled):
     """Every public plot bound to its data, as ``name -> f(ax)``."""
     state = machine.network.voltages(result.x[-1])[1:]
     hot = machine.breakout()
@@ -62,6 +76,7 @@ def fixture_plots(machine, result, settled):
         "mode_shapes": lambda ax=None: viz.mode_shapes(machine.eigen, ax),
         "surface_field": lambda ax=None: viz.surface_field(hot, state, ax),
         "streamer": lambda ax=None: viz.streamer(result, ax),
+        "channel": lambda ax=None: viz.channel(grown, ax),
         "losses": lambda ax=None: viz.losses(result.losses(tj=TJ), ax),
         "temperatures": lambda ax=None: viz.temperatures(settled, ax),
     }
@@ -74,6 +89,11 @@ def _closed():
     plt.close("all")
 
 
+def spatial(collection):
+    """Three-dimensional segments of a 3-D line collection, which matplotlib keeps private."""
+    return np.asarray(collection._segments3d)  # pylint: disable=protected-access
+
+
 def twinned(ax):
     """Lines of an axes and of the twin it shares its x axis with, in draw order."""
     return [line for axes in ax.figure.axes for line in axes.lines]
@@ -83,7 +103,7 @@ def twinned(ax):
 def test_a_plot_returns_the_axes_it_was_given_and_labels_every_one(name, plots):
     ax = plots[name]()
     assert isinstance(ax, matplotlib.axes.Axes)
-    _, given = plt.subplots()
+    given = plt.figure().add_subplot(projection="3d" if name in SPATIAL else None)
     assert plots[name](given) is given
     for drawn in (ax, given):
         assert drawn.get_xlabel()
@@ -103,6 +123,24 @@ def test_the_streamer_plot_is_the_channel_length_and_what_it_dissipates(result, 
     assert np.array_equal(length.get_ydata(), result.length)
     assert np.array_equal(power.get_ydata(), result.streamer_power)
     assert length.get_ydata().max() > 0.0
+
+
+def test_the_channel_is_its_own_segments_coloured_by_its_own_charges(grown, plots):
+    rings, tree = plots["channel"]().collections
+    nodes, parent = grown.tree.nodes, grown.tree.parent
+    electrode = grown.discharge.rings
+    assert np.array_equal(
+        spatial(tree), np.stack([nodes[parent[1:]], nodes[1:]], axis=1)
+    )
+    assert np.array_equal(tree.get_array(), grown.discharge.charges()[len(electrode) :])
+    circles = spatial(rings)
+    assert circles.shape == (len(electrode), RING_POINTS, 3)
+    assert np.hypot(circles[..., 0], circles[..., 1]) == pytest.approx(
+        np.repeat(electrode.a[:, None], RING_POINTS, axis=1)
+    )
+    assert np.array_equal(
+        circles[..., 2], np.repeat(electrode.z[:, None], RING_POINTS, axis=1)
+    )
 
 
 def test_one_labelled_profile_is_drawn_per_mode(machine, plots):

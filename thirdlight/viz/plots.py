@@ -1,4 +1,4 @@
-"""Waveform, mode-shape, field and streamer plots of what a run carries.
+"""Waveform, mode-shape, field, streamer and channel plots of what a run carries.
 
 Each function draws one view of one data object onto a supplied or fresh Axes
 and returns it, so the figure, the backend and whether anything is shown or
@@ -7,6 +7,9 @@ saved stay the caller's. See §4 of design.
 
 import matplotlib.pyplot as plt
 import numpy as np
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+RING_POINTS = 64
 
 
 def _axes(ax, xlabel, ylabel):
@@ -16,6 +19,14 @@ def _axes(ax, xlabel, ylabel):
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     return ax
+
+
+def _axes3d(ax, xlabel, ylabel, zlabel):
+    """The Axes given, or a fresh three-dimensional one, labelled on all three."""
+    if ax is None:
+        ax = plt.figure().add_subplot(projection="3d")
+    ax.set_zlabel(zlabel)
+    return _axes(ax, xlabel, ylabel)
 
 
 def _twinned(ax, x, xlabel, left, right):
@@ -73,6 +84,34 @@ def streamer(result, ax=None):
         ("channel length (m)", result.length),
         ("streamer power (W)", result.streamer_power),
     )
+
+
+def _circles(rings):
+    """Each ring of an electrode as a closed polyline about the axis, (rings, points, 3)."""
+    angle = np.linspace(0.0, 2.0 * np.pi, RING_POINTS)
+    unit = np.stack([np.cos(angle), np.sin(angle), np.zeros(RING_POINTS)], axis=-1)
+    axial = np.stack([np.zeros(len(rings)), np.zeros(len(rings)), rings.z], axis=-1)
+    return rings.a[:, None, None] * unit[None] + axial[:, None, :]
+
+
+def channel(state, ax=None):
+    """A grown channel over its electrode in three dimensions, coloured by segment charge.
+
+    The tree is one line collection over the segment endpoints it already
+    carries, coloured by the charges 3.4b's mixed solve puts on them, and the
+    electrode the rings of the same solve.
+    """
+    discharge = state.discharge
+    nodes, parent = state.tree.nodes, state.tree.parent
+    circles = _circles(discharge.rings)
+    ax = _axes3d(ax, "x (m)", "y (m)", "z (m)")
+    ax.add_collection3d(Line3DCollection(circles, colors="0.7"))
+    tree = Line3DCollection(np.stack([nodes[parent[1:]], nodes[1:]], axis=1))
+    tree.set_array(discharge.charges()[len(discharge.rings) :])
+    ax.add_collection3d(tree)
+    ax.figure.colorbar(tree, ax=ax, label="segment charge (C)")
+    ax.auto_scale_xyz(*np.concatenate([nodes, circles.reshape(-1, 3)]).T)
+    return ax
 
 
 def losses(ledger, ax=None):

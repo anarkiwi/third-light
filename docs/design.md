@@ -576,6 +576,88 @@ segments rather than the few hundred of a real one: the cost is the circuit's,
 the scalar one costs to within a quarter either way, the tree's growth being paid
 for by the stages it does not have to build.
 
+### 3.4e Phase-6 residuals, and what the grown channel changes
+
+§3.4a's measurement, repeated with the tree in place of the scalar length. Over
+the same three bus points on the same example machine the grown channel settles
+at 0.45, 0.52 and 0.58 m for 207 W, 570 W and 1.23 kW -- k = 1.23, 0.85 and
+0.65 in/√W, against the published 1.2 to 2.1 [12], [13], [14] and against the
+scalar model's own 2.03, 1.65 and 1.31 at the same buses. Only the lowest-power
+point is inside the band, and the seed does not explain the distance to it: over
+three seeds the three points read 1.23-1.34, 0.75-0.97 and 0.57-0.65. The
+within-coil exponent is 0.00 to 0.14 over those seeds against Ward's 0.341 and
+the scalar model's 0.270. The grown channel reproduces the published data worse
+than the scalar one on both counts, so the scalar model stays the default;
+both remain usable and swept alike, `Machine.streamer` and `Machine.channel`
+through one `batch.spark`.
+
+What is wrong is the shape, not the load, the clock or the gradient. The
+cluster's own path length is 5.3 to 9.5 m where its extent is 0.43 to 0.55: at
+[18]'s η = 1 over `Growth.cone`'s forward hemisphere the channel reaches 6 to
+8 % of the length of the wire it is made of, forking 31 to 51 times in 106 to
+189 segments, and §3.4c's estimator reads D = 2.8 to 3.6 on it, the same
+finite-size reading §3.4c leaves unresolved. That is also what flattens the law.
+The growth clock makes the segment count linear in the drive, N = v V t / h, so
+N goes as √P at a fixed burst length, and the reach of a cluster of N segments
+goes as N^(1/D); the within-coil exponent is therefore 0.5/D, which is 0.14 to
+0.18 at the dimension these clusters read and would be Ward's 0.341 only at
+D ≈ 1.5. The measured exponents scatter 0.00 to 0.27 about it across seeds and
+growth steps.
+
+The extent is not converged in the growth step either, and the step is a
+discretisation rather than a constant of the physics: at identical physics k
+falls 1.59, 1.23, 0.78 at the lowest power and 0.71, 0.65, 0.50 at the highest
+as h goes 0.10, 0.05, 0.025 m, a tortuous cluster of a given path length being
+shorter the finer it is resolved. That is not a tolerance to be refined away:
+N goes as 1/h at a fixed drive and reach as h N^(1/D), so the reach goes as
+h^(1 − 1/D) and falls to nothing as the step does. The model has no continuum
+limit in h, and there is no h at which the sweep sits in the band.
+
+Two things move it, neither a calibration. η is not one of them: at η = 6 the
+coupled cluster is still 11 to 15 % straight and still forks 21 to 33 times, and
+k only reaches 1.59, 1.13 and 0.74. The cone is: restricted to 0.5 rad, a leader
+that cannot turn sharply, growth is a needle -- D = 1.01 to 1.08, no forks at
+all, 77 to 92 % straight -- and it reaches 1.03 to 1.14 m for k = 2.82, 2.01 and
+1.35, straddling the band. It lands there for the scalar model's own reason: an
+unbranched channel stops where its tip field falls below the critical
+propagation field, which is §3.4a's V/E ceiling read at the tip rather than
+along the whole channel, and its three lengths sit within a fifth of it. Nothing
+in the published data discriminates between the two shapes: coilers publish a
+length and a power, never a tortuosity, so no source distinguishes a 1.2 m
+leader from the 9 m of channel a D = 3 cluster spends reaching 0.5 m.
+
+§3.4a's double count is removed in principle and not in practice. There is no
+E ℓ term in the grown model at all -- the gradient enters once, as the field a
+candidate has to be crossed at, and the resistance is the tree's own path
+resistance rather than a lumped 220 kΩ beside it -- but the double count was not
+what was holding the scalar model's agreement together. Removing it costs a
+factor of two in spark length and the whole of the power law, because the length
+the scalar model reports is a leader's and the length the grown model reports is
+a fractal cluster's reach. The residual §3.4a leaves standing, that the
+sustaining gradient which lands in the band is below the cold-streamer value, is
+not settled here; it is exchanged for §3.4c's open question about the absolute
+dimension, which now has a second measurement riding on it.
+
+The between-burst map is the model's own. The gap is one undriven `advance` of
+the state the run leaves, which for the scalar model is the analytic decay of
+the length ODE it always was and for the tree is §3.4d's cooling prune, so what
+carries over between the bursts of a cycle is a tree rather than a number; the
+iteration stops on `resolution`, the seed length a burst cannot tell from none,
+which is the immaterial length for one model and one growth step for the other.
+§3.6's settled cycle carries its channel over the same way, by the same call.
+
+Cost decides what can be checked rather than the physics. An operating point is
+two bursts, the burst and the one seeded by what the gap leaves of it, and the
+points of a sweep are independent, so the sweep is three worker processes of
+`batch.sweep` over `driver.bus`: 5.9 s wall and 16.8 s CPU for the three points,
+against 7.0 s and 20.1 s for the same sweep driven by the scalar model, and
+11.2 s and 22.4 s at h = 0.025 m with the segment cap raised to 2048. The grown
+channel is not what makes a bang expensive, and §3.4d's size residual is smaller
+than it looked on a test-sized burst: the example machine's own 150 µs bang
+reaches 106 to 189 segments over the three bus points at h = 0.05 m, and 462 of
+a 512-segment buffer at h = 0.02, so the hundreds of segments a real bang
+carries are reachable at a growth step of a few centimetres.
+
 ### 3.5 Loss extraction
 
 Conduction loss is already in the state space and comes back out of it by
@@ -809,14 +891,14 @@ thirdlight/
   secondary.py     ladder assembly, eigen-solve, modal reduction
   circuit/         bridge, tank, bus, diode/IGBT companion models, state-space builder
   control/         feedback CT, phase lead, comparator/delay, interrupter, MIDI, QCW ramp
-  discharge/       breakout, Fritz load, length dynamics, DBM (phase 3)
+  discharge/       breakout, Fritz load, length dynamics, filament tree, DBM growth
   thermal/         loss extraction; Foster and Cauer networks, junction temperature
   solver/          expm precompute, event stepping, CUDA and CPU kernels
   batch.py         design-space expansion, sweep runner, Optuna/scipy objective glue
   acoustics.py     thermoacoustic simple source, burst rendering, WAV output
   pair.py          two coils side by side: electrode coupling and the coupled modes
   io/              YAML design schema round trip, xarray/parquet output
-  viz/             waveform, mode-shape, field and streamer plots
+  viz/             waveform, mode-shape, field, streamer and 3-D channel plots
 ```
 
 Backend selection: `THIRDLIGHT_BACKEND=cuda|cpu`, default auto.
@@ -891,6 +973,9 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Branch interval energy | `scipy.integrate.solve_ivp` DOP853 of the branch's own ODE, at R C from 11 to 0.001 of the interval | 1e-9 rel |
 | Branch floor | the level against the branch's own omega R C, and the branch each level is built at | exact; the ladder within half a level |
 | Grown-channel determinism | a run against itself at one seed, and against another seed | bit for bit; different |
+| Between-burst carryover | the state a run leaves against the extent it reports, a length or a tree; the burst the cooled tree seeds | exact; a longer settled extent |
+| Grown spark length vs power | published DRSSTC k = 1.2..2.1 in/sqrt(W) [12], [13], [14], over a process pool | k falling 1.23, 0.85, 0.65 and so below the band; exponent under 0.30, 3.4e |
+| Grown channel in three dimensions | the segment collection against the tree's own endpoints and charges, the ring collection against the electrode | exact |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 | Foster step response | its own closed form Zth(t) = sum R (1 - exp(-t/tau)) | 1e-12 rel |
@@ -1004,7 +1089,28 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
    to 1e-12 against its observables, and every kernel of the device build
    constructs. What is left to the `cuda` job is the PTX compile and the launch,
    since compiling a device call tree needs a driver.
-6. DBM streamer geometry, acoustics, JavaTC import, 3D visualisation.
+6. DBM streamer geometry, acoustics and 3D visualisation. Done; §3.4b, §3.4c,
+   §3.4d, §3.4e and §3.7. The channel is grown rather than prescribed, its load
+   is the filament electrostatics of the tree and the electrode together rather
+   than a capacitance per unit length, [18]'s rule is solved off-lattice against
+   one incrementally bordered Cholesky factor with no grid Laplace solve, and the
+   grown tree drives the solver as a channel model beside the scalar one, which
+   is untouched by it. Recalibrated against the published spark lengths the grown
+   channel reads below the band and flattens the within-coil exponent, §3.4e's
+   measurement and not a target, so the scalar model stays the default and both
+   stay usable and swept alike. The channel plot is `viz`'s one three-dimensional
+   view, segments coloured by the charges the mixed solve already carries.
+   JavaTC import is dropped rather than deferred, for §4c's reason unchanged: it
+   is a browser-form tool whose saved format no public source documents, so a
+   guessed parser could be validated against nothing, where everything else here
+   is checked against a published reference or a closed form. Parsing JavaTC's
+   text report output, which is documented by example, would be defensible as a
+   source of benchmark fixtures alone; it is not built here. Two residuals stay
+   open: §3.4c's absolute fractal dimension, which needs clusters an order of
+   magnitude larger than a 60 s test and which §3.4e's exponent now rides on, and
+   the bang size of §3.4d, which §3.4e measures at 106 to 189 segments on the
+   example machine at a 5 cm growth step and 462 of a 512-segment buffer at 2 cm,
+   the circuit's own step count being what a finer channel costs.
 7. Two coils side by side. Done; §3.8. A pair is two single-coil solves and one
    potential coefficient rather than a new geometry, because at the separations
    a pair is built at neither tower perturbs the other's own axisymmetric
@@ -1015,7 +1121,7 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 
 | Tool | What it does | Reuse |
 |---|---|---|
-| JavaTC (Anderson) | Full quasi-static coil design incl. mutual inductance, Medhurst, toroid C, tuning | input format, benchmark values |
+| JavaTC (Anderson) | Full quasi-static coil design incl. mutual inductance, Medhurst, toroid C, tuning | benchmark values; the input format is dropped, §7 |
 | TeslaMap (Wilson) | Fast SGTC design calculator | benchmark values |
 | tssp (Nicholson et al.) | Precision self-resonant solenoid model, distributed L/C, measured validation | method, validation data |
 | acmi (Nicholson) | Air-core mutual inductance for concentric windings | method, validation data |

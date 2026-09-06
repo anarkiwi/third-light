@@ -1,17 +1,21 @@
 """Spark length against input power: the operating point map, its law and the fit."""
 
 import math
+from dataclasses import replace
+from functools import partial
 
 import numpy as np
 import pytest
 import yaml
 
-from thirdlight.discharge import calibration
+from thirdlight import batch
+from thirdlight.discharge import Growth, calibration
 from thirdlight.machine import Machine
 
 with open("examples/drsstc.yaml", encoding="utf-8") as _handle:
     SPEC = yaml.safe_load(_handle)
 BUSES = [1.0e4, 2.0e4, 4.0e4]
+GROWTH = Growth(step=0.05, radius=1.0e-3, eta=1.0)
 
 
 def small(**changes):
@@ -120,7 +124,50 @@ def test_the_calibrated_constants_land_inside_the_published_spark_length_band():
     power, length = calibration.sweep(
         machine, machine.streamer(), [120.0, 200.0, 350.0]
     )
-    coefficient = length / np.sqrt(power) / 0.0254
+    coefficient = calibration.inches_per_root_watt(power, length)
     assert 190.0 < power[0] and power[-1] < 1400.0
     assert np.all((coefficient > 1.2) & (coefficient < 2.1))
     assert 0.25 < np.polyfit(np.log(power), np.log(length), 1)[0] < 0.40
+
+
+def test_a_burst_leaves_the_state_the_next_one_carries_over():
+    """A length for the scalar model, the surviving tree for a grown one.
+
+    The second burst of an operating point starts from what the first left after
+    the gap, so a cooling time long against the gap lengthens what it settles at.
+    """
+    base = small()
+    machine = replace(base, driver=replace(base.driver, bus=1.0e5))
+    scalar = calibration.burst(machine, streamer(machine))
+    assert scalar.channel_state == scalar.length[-1]
+    model = machine.channel(replace(GROWTH, step=0.02), cooling=1.0e-3)
+    first = calibration.burst(machine, model, rng=np.random.default_rng(0))
+    assert first.channel_state.tree.segments >= 1
+    assert model.extent(first.channel_state) == first.length[-1]
+    length = calibration.operating_point(
+        machine, model, cycles=2, rng=np.random.default_rng(0)
+    )[1]
+    assert length > first.length.max()
+
+
+@pytest.mark.slow
+def test_the_grown_channel_reads_below_the_published_band_and_flattens_the_law():
+    """The measurement of 3.4e, over a process pool because the points are independent.
+
+    Growing the channel geometrically does not reproduce 3.4a's k = 1.2 to 2.1
+    in/sqrt(W): the extent of a cluster of dimension 3 is not its own length, so k
+    falls out of the band and the within-coil exponent flattens towards zero.
+    """
+    frame = batch.sweep(
+        SPEC,
+        {"driver.bus": [120.0, 200.0, 350.0]},
+        observe=partial(batch.spark, rule=GROWTH, seed=0),
+        workers=3,
+    )
+    power, length = frame.power.to_numpy(), frame.length.to_numpy()
+    coefficient = frame.coefficient.to_numpy()
+    assert 190.0 < power[0] and power[-1] < 1400.0
+    assert np.all(length > 6.0 * GROWTH.step)
+    assert np.all(np.diff(coefficient) < 0.0)
+    assert coefficient[0] < 2.1 and coefficient[-1] < 1.2
+    assert np.polyfit(np.log(power), np.log(length), 1)[0] < 0.30

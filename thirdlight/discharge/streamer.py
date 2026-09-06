@@ -57,6 +57,11 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
         )
 
     @property
+    def resolution(self):
+        """Seed length a burst cannot tell from none, which is the immaterial length."""
+        return self.minimum
+
+    @property
     def rate(self):
         """Relaxation rate of the length ODE while the channel is being driven."""
         return self.growth * self.gradient + 1.0 / self.cooling

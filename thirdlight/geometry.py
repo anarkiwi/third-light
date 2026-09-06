@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import numpy as np
 import yaml
 
+from thirdlight.em.inductance import strip_radius
+
 
 def _apportion(total, weights):
     """Largest-remainder split of ``total`` bands proportional to ``weights``, at least one each."""
@@ -174,11 +176,19 @@ class Sphere:
 
 
 @dataclass(frozen=True)
-class Primary:
-    """Flat spiral, helical or conical primary; one ring per turn.
+class Primary:  # pylint: disable=too-many-instance-attributes
+    """Flat spiral, helical or conical primary of round or rectangular conductor.
 
-    ``rise`` is the axial gain per turn and ``pitch`` the radial gain per turn, so
-    a flat spiral has rise = 0 and a helix has pitch = 0.
+    One ring per turn. ``rise`` is the axial gain per turn and ``pitch`` the radial
+    gain per turn, so a flat spiral has rise = 0 and a helix has pitch = 0.
+
+    A non-zero ``band_width`` selects flat strap over round wire and retires
+    ``wire_diameter``. ``band_width`` is the strap's extent along the winding axis
+    and ``band_thickness`` its radial one, which is a strap standing on edge, the
+    usual single-turn primary; a flat-laid spiral of the same strap passes the two
+    the other way round. Either way the conductor enters the self terms as the self
+    geometric mean distance of its cross-section, a property of the section alone,
+    so only the pairing of the two numbers with the axes differs.
     """
 
     inner_radius: float
@@ -187,17 +197,29 @@ class Primary:
     rise: float = 0.0
     base: float = 0.0
     wire_diameter: float = 0.006
+    band_width: float = 0.0
+    band_thickness: float = 0.0
+
+    def __post_init__(self):
+        if self.band_thickness > 0.0 and self.band_width == 0.0:
+            raise ValueError("band_thickness needs a band_width to be the thickness of")
 
     def discretise(self, sections=None):
         """One ring per turn, or ``sections`` equal turn-count rings."""
         count = int(np.ceil(self.turns)) if sections is None else sections
         t = self.turns * (np.arange(count) + 0.5) / count
+        if self.band_width > 0.0:
+            w = self.band_width
+            rw = strip_radius(self.band_width, self.band_thickness)
+        else:
+            w = self.wire_diameter
+            rw = 0.5 * self.wire_diameter
         return Rings(
             a=self.inner_radius + self.pitch * t,
             z=self.base + self.rise * t,
             n=np.full(count, self.turns / count),
-            w=np.full(count, self.wire_diameter),
-            rw=np.full(count, 0.5 * self.wire_diameter),
+            w=np.full(count, w),
+            rw=np.full(count, rw),
         )
 
 

@@ -15,7 +15,9 @@ All lengths are metres, measured from the ground plane at z = 0.
 | `primary.pitch` | radial gain per turn (0 for a helix) |
 | `primary.rise` | axial gain per turn (0 for a flat spiral) |
 | `primary.base` | height of the first turn |
-| `primary.wire_diameter` | conductor or tube diameter |
+| `primary.wire_diameter` | conductor or tube diameter; unused once `band_width` is set |
+| `primary.band_width` | flat strap extent along the winding axis, 0 for round conductor |
+| `primary.band_thickness` | flat strap extent across it, the radial one for a strap on edge |
 | `top_load.kind` | `toroid` or `sphere` |
 | `top_load.major_radius` | toroid centreline radius |
 | `top_load.minor_radius` | toroid tube radius |

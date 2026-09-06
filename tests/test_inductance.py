@@ -5,6 +5,7 @@ import math
 import numpy as np
 import pytest
 from scipy.constants import mu_0
+from scipy.integrate import dblquad, quad
 from scipy.special import ellipe, ellipk
 
 from thirdlight.em.inductance import (
@@ -15,6 +16,7 @@ from thirdlight.em.inductance import (
     section_inductance_matrix,
     self_ring,
     solenoid_inductance,
+    strip_radius,
     turn_groups,
 )
 from thirdlight.geometry import Primary, Solenoid
@@ -60,6 +62,42 @@ def sheet_inductance(coil):
         / coil.length
         * nagaoka(coil.radius, coil.length)
     )
+
+
+def segment_log_gmd(w):
+    """(1/w^2) int_0^w int_0^w ln|x - y| dx dy, the log self GMD of a segment."""
+
+    def inner(x):
+        return quad(
+            lambda y: math.log(abs(x - y)),
+            0.0,
+            w,
+            points=[x],
+            limit=200,
+            epsabs=0.0,
+            epsrel=1e-13,
+        )[0]
+
+    return quad(inner, 0.0, w, limit=200, epsabs=0.0, epsrel=1e-13)[0] / (w * w)
+
+
+def rectangle_gmd(w, t):
+    """Self GMD of a w x t rectangle, straight from ln g = <ln|r - r'|>.
+
+    The quadruple integral collapses onto the difference vector (u, v), whose
+    density is the triangular autocorrelation (w - |u|)(t - |v|) of the section;
+    both integrands are even, so a quadrant carries the whole.
+    """
+    integral = dblquad(
+        lambda v, u: (w - u) * (t - v) * math.log(u * u + v * v),
+        0.0,
+        w,
+        0.0,
+        t,
+        epsabs=1e-12,
+        epsrel=1e-12,
+    )[0]
+    return math.exp(2.0 * integral / (w * w * t * t))
 
 
 SECONDARY = Solenoid(
@@ -169,3 +207,53 @@ def test_primary_coupling_rises_as_the_primary_approaches_the_base(secondary_tot
         coupling.append(mutual_matrix(primary, secondary).sum() / math.sqrt(lp * ls))
     assert all(0.0 < k < 1.0 for k in coupling)
     assert np.all(np.diff(coupling) > 0.0)
+
+
+@pytest.mark.parametrize("w", [1.0, 0.02, 250.0])
+def test_thin_strip_self_gmd_is_exact(w):
+    """A segment's self GMD is w exp(-3/2), which is strip_radius at zero thickness."""
+    assert segment_log_gmd(w) == pytest.approx(math.log(w) - 1.5, abs=1e-12)
+    assert strip_radius(w) == pytest.approx(w * math.exp(-1.5), rel=1e-15)
+    assert strip_radius(w, 0.0) == strip_radius(w)
+
+
+@pytest.mark.parametrize("ratio", [1.0, 0.5, 0.1])
+def test_rectangle_gmd_matches_rosa_to_a_quarter_percent(ratio):
+    """exp(-3/2)(w + t) sits 0.18 %, 0.21 % and 0.21 % low at t/w = 1, 1/2, 1/10.
+
+    The approximation is one-signed and worst near t/w = 0.22, where it is 0.25 %
+    low; it is exact as t/w -> 0. A quarter percent on rw is parts in 10^4 on a
+    loop inductance, which reads rw through a logarithm.
+    """
+    w, t = 0.08, 0.08 * ratio
+    error = strip_radius(w, t) / rectangle_gmd(w, t) - 1.0
+    assert -2.5e-3 < error < 0.0
+
+
+def test_a_wider_band_is_a_lower_inductance_loop():
+    """Loop inductance falls as ln(1/rw); a band of matched GMD is its round wire."""
+    loop = [
+        inductance_matrix(
+            Primary(
+                inner_radius=0.15, turns=1.0, band_width=w, band_thickness=0.002
+            ).discretise()
+        ).sum()
+        for w in (0.01, 0.02, 0.05, 0.1, 0.2)
+    ]
+    assert np.all(np.diff(loop) < 0.0)
+    diameter = 0.0064
+    band = Primary(
+        inner_radius=0.15, turns=1.0, band_width=0.5 * diameter * math.exp(1.5)
+    )
+    round_wire = Primary(inner_radius=0.15, turns=1.0, wire_diameter=diameter)
+    assert band.discretise().rw == pytest.approx(0.5 * diameter, rel=1e-14)
+    assert inductance_matrix(band.discretise()).sum() == pytest.approx(
+        inductance_matrix(round_wire.discretise()).sum(), rel=1e-14
+    )
+
+
+def test_strip_radius_rejects_impossible_sections():
+    with pytest.raises(ValueError, match="width must be positive"):
+        strip_radius(0.0)
+    with pytest.raises(ValueError, match="thickness must be non-negative"):
+        strip_radius(0.05, -1e-3)

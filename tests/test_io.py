@@ -56,6 +56,13 @@ DESIGNS = {
     "no breakout": design(top_load=TOROID, former=FORMER),
     "no former": design(top_load=TOROID, breakout=POINT),
     "no ground plane": design(top_load=TOROID, ground_plane=False),
+    "band primary": Design(
+        secondary=SECONDARY,
+        primary=Primary(
+            inner_radius=0.2, turns=1.0, band_width=0.075, band_thickness=0.0015
+        ),
+        top_load=TOROID,
+    ),
     "sections": design(
         top_load=BALL,
         breakout=Sphere(radius=0.006, height=0.8),

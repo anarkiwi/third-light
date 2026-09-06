@@ -420,6 +420,67 @@ q_k need no path walk and no ancestor matrix: growth appends nodes, so every
 parent has a lower index than its child and one reverse scatter-add over
 segments accumulates every subtree sum in O(n).
 
+### 3.4c Dielectric breakdown growth of the tree
+
+The tree is grown rather than prescribed, by the Niemeyer-Pietronero-Wiesmann
+model [18] solved the way [19] does it. Electrode and channel are one conductor
+set at unit potential, so §3.4b's mixed solve already carries every source
+charge and the potential anywhere else is their superposition: there is no
+lattice, and no grid Laplace solve per step, which is the whole reason the
+filament operator exists. Each node offers candidate sites one step h away along
+a Fibonacci spiral over a forward cone about its own segment direction — the
+compact deterministic quasi-uniform set, containing the axis itself so that a
+channel under a dominant field goes straight on rather than zig-zagging between
+two tied neighbours — and the root uses the seed direction. One dense
+matrix-vector product of the candidate-to-source coefficients against the charge
+vector gives the potential at every candidate at once.
+
+Three rejections define what a site may be. Below the ground plane or inside the
+electrode is geometry. Within one step of an existing node is the off-lattice
+form of a lattice site being occupied once, and it is not optional: with the
+channel radius as the exclusion instead, a cluster packs fifty times denser than
+its own step and no dimension it produces means anything. A channel core may not
+cross the grounded plane either, where its own image would cancel its self term.
+The mean field driving a step is (V − φ)/h at unit channel potential, and a
+candidate below the critical propagation field cannot break down: that is what
+terminates growth, and it is the geometric replacement for §3.4a's E ℓ
+sustaining gradient. Among the admissible, probability goes as field^η, with η
+[18]'s own exponent and not fitted; the weights are formed relative to the
+largest field, which is the same distribution and does not overflow at large η.
+
+The incremental factor is what makes the model usable. Refactorising the
+(rings + segments) system each step is O(n³) per step and O(n⁴) over a growth,
+which is unusable at any interesting size. Growth appends, so a segment appends
+a row and column at the end of the matrix and no permutation is needed: bordering
+[[P, b], [bᵀ, d]] leaves the old Cholesky factor untouched, and the new row is
+one triangular solve L c = b and one square root √(d − c·c). That is O(n²) per
+step, O(n³) over the growth, and BLAS-2 throughout, with the factor living in a
+buffer sized for the whole growth so that no append reallocates. It is exact,
+not approximate, and §5 checks it against a dense `scipy.linalg.cholesky` of the
+assembled matrix at several points through a growth: the assembly's point
+matching is not reciprocal, so the border is taken with the field at the
+lower-indexed midpoint exactly as the dense assembly takes it. The candidate pool
+is maintained the same way, one new column of coefficients per segment and one
+block of rows per node, so no coefficient is recomputed and no pool rebuilt; a
+step costs O(n) kernel evaluations against the O(n²) of the factor. Where two
+channels would interpenetrate the bordered matrix comes out indefinite, which is
+the exact statement that the model cannot carry that segment, so the candidate is
+dropped and another drawn rather than screened by a geometric threshold.
+
+What the dimensions do and do not reproduce is worth stating plainly. Measured
+by R_g ~ N^(1/D) over one cluster's own growth, the estimator is biased high at
+reachable sizes, and the η = 0 limit calibrates that bias because compact growth
+must give exactly the embedding dimension: it reads 2.24 in a plane at 500
+segments against 2, and 3.12 in space at 300 against 3. Corrected by its own
+calibration, η = 1 in space lands near the 2.5 of three-dimensional Laplacian
+growth. In a plane it does not land on [18]'s 1.75 and nothing here should be
+adjusted until it does: a planar cluster in a three-dimensional kernel is
+screened by field lines that leave the plane, its fjords stay open, and it is not
+the two-dimensional universality class whatever η is. What survives, and what §5
+checks, is the ordering [18] pins — D falls monotonically with η — together with
+the two limits it is bracketed by, the Eden cluster at η = 0 and the unbranched
+needle as η grows.
+
 ### 3.5 Loss extraction
 
 Conduction loss is already in the state space and comes back out of it by
@@ -607,6 +668,14 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Straight channel refinement | its own value at twice the segment count | 1e-2, lands at 1.3e-3 |
 | Series resistance reduction | sum R_k for a chain charged at its tip; R_t + R_b/2 for a symmetric fork | 1e-12 rel |
 | Subtree charges | a naive per-node ancestor walk on a random tree | exact |
+| Incremental bordered factor | `scipy.linalg.cholesky` of the assembled mixed matrix, through a growth | 1e-10 rel, lands at 9e-15 |
+| Growth dimension vs eta | D falls with eta [18]; eta = 0, 3, 6 in space over four seeds each | ordering, 3.14 > 2.50 > 1.76 |
+| Eden limit, eta = 0 | the embedding dimension, which compact growth must give | 2.24 +- 0.20 in a plane at 500 segments |
+| Needle limit, eta large | unbranched, D -> 1 | one fork per 30 segments, D = 1.08 |
+| Growth dimension, eta = 1 in a plane | Niemeyer's 1.75 [18] | not reproduced, 2.26 +- 0.17 over six seeds; see 3.4c |
+| Grown tree structure | parents precede children, above ground, outside the electrode, every segment one step | exact, 1e-15 on the length |
+| Growth termination | the step cap at zero critical field; a short tree above it; none above the electrode's own | exact |
+| Grown channel load | `channel_load` against segment count | capacitance rising, series resistance positive |
 | Propagator Φ_σ(t), Γ_σ(t) | `scipy.linalg.expm` of the augmented matrix | 1e-12 rel |
 | Energy conservation | lossless circuit, float32 stepping | 1e-4 over 10^6 steps |
 | Foster step response | its own closed form Zth(t) = sum R (1 - exp(-t/tau)) | 1e-12 rel |

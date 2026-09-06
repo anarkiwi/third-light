@@ -608,8 +608,10 @@ The extent is not converged in the growth step either, and the step is a
 discretisation rather than a constant of the physics: at identical physics k
 falls 1.59, 1.23, 0.78 at the lowest power and 0.71, 0.65, 0.50 at the highest
 as h goes 0.10, 0.05, 0.025 m, a tortuous cluster of a given path length being
-shorter the finer it is resolved. There is no h at which the sweep sits in the
-band.
+shorter the finer it is resolved. That is not a tolerance to be refined away:
+N goes as 1/h at a fixed drive and reach as h N^(1/D), so the reach goes as
+h^(1 − 1/D) and falls to nothing as the step does. The model has no continuum
+limit in h, and there is no h at which the sweep sits in the band.
 
 Two things move it, neither a calibration. η is not one of them: at η = 6 the
 coupled cluster is still 11 to 15 % straight and still forks 21 to 33 times, and

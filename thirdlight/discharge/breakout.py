@@ -49,13 +49,17 @@ class Breakout:
     field: np.ndarray
     critical: np.ndarray
 
+    def profile(self, v):
+        """Surface field at each electrode ring at modal state ``v``, in V/m."""
+        return np.abs(np.asarray(v) @ self.field.T)
+
     def stress(self, v):
         """Peak surface field over the electrode at modal state ``v``, in V/m."""
-        return np.max(np.abs(np.asarray(v) @ self.field.T), axis=-1)
+        return np.max(self.profile(v), axis=-1)
 
     def margin(self, v):
         """Peak field as a fraction of the local threshold; 1 or more breaks out."""
-        return np.max(np.abs(np.asarray(v) @ self.field.T) / self.critical, axis=-1)
+        return np.max(self.profile(v) / self.critical, axis=-1)
 
     @property
     def voltage(self):

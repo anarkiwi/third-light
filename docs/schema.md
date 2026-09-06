@@ -90,4 +90,11 @@ The streamer is not part of the schema. It is built from a loaded machine by
 of `thirdlight.discharge.streamer` and needs the driven frequency the machine
 already knows; keyword arguments override any of them.
 
+`thirdlight.io.to_dict` writes a `Design` back to the geometry keys above,
+omitting every field left at its default, and `thirdlight.io.dump` writes that as
+YAML; `Design.from_dict` of the result is the design it came from. A built
+`Machine` does not round trip, since loading has already resolved `tank.tune`
+into a capacitance and `driver.lead_angle` into a phase lead. What a sweep varies
+is the mapping `thirdlight.io.load` returns, and what it records is that mapping.
+
 See `examples/` for complete designs.

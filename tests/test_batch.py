@@ -11,6 +11,7 @@ import yaml
 from scipy.optimize import minimize
 
 from thirdlight import batch, secondary
+from thirdlight.discharge import Growth, calibration
 from thirdlight.em import losses
 from thirdlight.machine import Machine
 
@@ -165,6 +166,18 @@ def test_a_bounded_scipy_minimisation_walks_the_figure_downhill():
     )
     assert solution.x[0] > start
     assert solution.fun < obj([start])
+
+
+def test_spark_reports_the_operating_point_of_whichever_channel_model():
+    machine = Machine.from_dict(copy.deepcopy(BASE))
+    scalar = batch.spark(machine, growth=2.0, cooling=2.0e-6)
+    assert set(scalar) == {"power", "length", "coefficient"}
+    assert scalar["power"] > 0.0 and scalar["length"] > 0.0
+    assert scalar["coefficient"] == pytest.approx(
+        calibration.inches_per_root_watt(scalar["power"], scalar["length"])
+    )
+    grown = batch.spark(machine, Growth(step=0.02, radius=1.0e-3), seed=0)
+    assert grown["power"] > 0.0 and grown["length"] >= 0.0
 
 
 def test_performance_reports_the_burst_and_what_it_heats():

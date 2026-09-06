@@ -113,6 +113,25 @@ def performance(machine, streamer=None, **kwargs):
     }
 
 
+def spark(machine, rule=None, seed=None, **kwargs):
+    """Input power, settled spark length and the k = L / sqrt(P) they imply.
+
+    ``rule`` selects the model: none is the scalar channel of
+    :meth:`Machine.streamer`, a :class:`~thirdlight.discharge.Growth` the grown
+    tree of :meth:`Machine.channel` at ``seed``. ``kwargs`` go to whichever.
+    """
+    if rule is None:
+        model, rng = machine.streamer(**kwargs), None
+    else:
+        model, rng = machine.channel(rule, **kwargs), np.random.default_rng(seed)
+    power, length = calibration.operating_point(machine, model, rng=rng)
+    return {
+        "power": float(power),
+        "length": float(length),
+        "coefficient": float(calibration.inches_per_root_watt(power, length)),
+    }
+
+
 def evaluate(variant, observe=observables):
     """One variant's row, empty where the build rejects the design.
 

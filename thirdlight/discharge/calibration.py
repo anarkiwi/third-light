@@ -1,13 +1,10 @@
 """Spark length against input power: operating points, Freau's law and the fit.
 
-A burst is simulated; the gap between bursts is not, because nothing happens
-there but the channel cooling, which is the analytic decay of the length ODE with
-no drive. One burst plus that map is a whole interrupter cycle, and iterating it
-to its fixed point gives the length the coil settles at, which is what a
-photograph measures.
+A burst is simulated; the gap between bursts is not, nothing happening there but
+the channel cooling, which is one undriven step of the model. Iterating burst and
+gap to their fixed point gives the settled length a photograph measures.
 """
 
-import math
 from dataclasses import replace
 
 import numpy as np
@@ -21,8 +18,13 @@ def freau_length(power, coefficient=FREAU_COEFFICIENT):
     return coefficient * np.sqrt(np.asarray(power, dtype=float))
 
 
+def inches_per_root_watt(power, length):
+    """k = L / sqrt(P) of an operating point, in the in/sqrt(W) the coilers publish."""
+    return np.asarray(length, dtype=float) / np.sqrt(np.asarray(power)) / 0.0254
+
+
 def burst(machine, streamer, length=0.0, tail=5.0, rng=None):
-    """One burst from a cold circuit and a channel of ``length``.
+    """One burst from a cold circuit and a channel seeded with ``length``.
 
     It runs ``tail`` resonant periods past the burst's end, far enough for the
     tank to ring down and return what it holds to the bus. ``rng`` is the
@@ -39,17 +41,18 @@ def span(machine, tail=5.0):
 def operating_point(machine, streamer, cycles=8, rtol=1e-3, rng=None):
     """Average input power and settled spark length of one interrupter cycle.
 
-    The burst is iterated from what the previous one left after cooling until the
-    seed length stops moving, which is one iteration whenever the gap between
-    bursts is long against the cooling time.
+    What carries over is the model's own state, a length for the scalar model and
+    the surviving tree for a grown one, cooled through the gap by one undriven
+    step of the model itself.
     """
     interrupter = machine.driver.interrupter
     gap = interrupter.period - span(machine)
-    length, result = 0.0, None
+    state, length, result = 0.0, 0.0, None
     for _ in range(cycles):
-        result = burst(machine, streamer, length, rng=rng)
-        seed = result.length[-1] * math.exp(-gap / streamer.cooling)
-        settled = abs(seed - length) <= rtol * max(seed, streamer.minimum)
+        result = burst(machine, streamer, state, rng=rng)
+        state = streamer.advance(result.channel_state, 0.0, 0.0, gap)
+        seed = streamer.extent(state)
+        settled = abs(seed - length) <= rtol * max(seed, streamer.resolution)
         length = seed
         if settled:
             break

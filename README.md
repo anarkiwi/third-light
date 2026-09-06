@@ -61,6 +61,9 @@ frame["frequency"]                    # per point; an infeasible point is NaN
 obj = batch.objective(spec, {"primary.turns": (4.0, 8.0)},
                       lambda m: abs(m.frequency - 3.0e5))
 differential_evolution(obj, obj.bounds)   # or an Optuna trial over obj.names
+
+batch.sweep(spec, {"driver.bus": [120.0, 200.0, 350.0]},   # spark length vs power,
+            observe=batch.spark, workers=3)                # one worker per point
 ```
 
 ```python
@@ -84,18 +87,26 @@ viz.waveforms(result)                 # primary current and top voltage
 viz.mode_shapes(modes)                # modal voltage profiles along the coil
 viz.losses(result.losses())           # component energy ledger
 viz.temperatures(hot)                 # settled cycle, mean and swing
+viz.channel(result.channel_state)     # grown tree over its electrode, in 3-D
 ```
 
 ```python
-from thirdlight.discharge import calibration
+from thirdlight.discharge import Growth, calibration
 
 machine.breakout().voltage        # top voltage that breaks the electrode out, V
-streamer = machine.streamer()     # Fritz channel load, calibrated constants
+streamer = machine.streamer()     # Fritz channel load, the default; calibrated constants
 result = machine.run(200e-6, streamer=streamer)
 result.length                     # streamer length, m, per sample
 result.streamer_power             # channel dissipation, W
+result.channel_state              # what the next burst carries over
 calibration.operating_point(machine, streamer)   # cycle mean power, spark length
+
+grown = machine.channel(Growth(step=0.05, radius=1e-3))  # DBM tree in place of the length
+machine.run(200e-6, streamer=grown, rng=0)   # its load and resistance from the tree
 ```
+
+Default channel model: the scalar one. The grown tree reads below the published
+spark-length band and flattens the within-coil exponent, docs/design.md §3.4e.
 
 ```python
 from thirdlight.pair import Pair
@@ -130,10 +141,14 @@ breakout, the streamer load and its length dynamics, switching-energy and
 component-resolved loss extraction, the Foster/Cauer thermal networks,
 junction temperature and settled interrupter cycle that consume it, and the
 schema round trip, labelled output, plots, design-space sweeps and the optimiser
-glue, the batched stepper on both targets, the thermoacoustic spark audio, and
-the side-by-side pair with its mutual capacitance and coupled modes (roadmap
-phases 1, 1a, 2, 3, 4, 5, 7 and the acoustics of 6). The rest of phase 6 --
-DBM streamer geometry, JavaTC import and 3D visualisation -- is not built.
+glue, the batched stepper on both targets, the thermoacoustic spark audio, the
+side-by-side pair with its mutual capacitance and coupled modes, and the
+discharge tree: filament electrostatics, dielectric-breakdown growth, the grown
+tree as a channel model on the solver and its three-dimensional plot (roadmap
+phases 1 to 7). JavaTC import is dropped, not deferred: no public source
+documents its saved format, so a parser guessed at it could be validated against
+nothing. Open: the absolute fractal dimension of the grown tree (§3.4c) and the
+segment count a bang reaches at a fine growth step (§3.4d, §3.4e).
 
 ## Test
 

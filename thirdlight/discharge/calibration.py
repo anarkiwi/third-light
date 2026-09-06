@@ -22,9 +22,17 @@ def freau_length(power, coefficient=FREAU_COEFFICIENT):
 
 
 def burst(machine, streamer, length=0.0, tail=5.0):
-    """One interrupter burst from a cold circuit, ``tail`` resonant periods past its end."""
-    duration = machine.driver.interrupter.on_time + tail / machine.frequency
-    return machine.run(duration, streamer=streamer, length0=length)
+    """One burst from a cold circuit and a channel of ``length``.
+
+    It runs ``tail`` resonant periods past the burst's end, far enough for the
+    tank to ring down and return what it holds to the bus.
+    """
+    return machine.run(span(machine, tail), streamer=streamer, length0=length)
+
+
+def span(machine, tail=5.0):
+    """Simulated part of an interrupter cycle: the burst and its ring-down."""
+    return machine.driver.interrupter.on_time + tail / machine.frequency
 
 
 def operating_point(machine, streamer, cycles=8, rtol=1e-3):
@@ -35,7 +43,7 @@ def operating_point(machine, streamer, cycles=8, rtol=1e-3):
     bursts is long against the cooling time.
     """
     interrupter = machine.driver.interrupter
-    gap = interrupter.period - interrupter.on_time
+    gap = interrupter.period - span(machine)
     length, result = 0.0, None
     for _ in range(cycles):
         result = burst(machine, streamer, length)

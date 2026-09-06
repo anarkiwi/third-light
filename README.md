@@ -37,6 +37,15 @@ result.top_voltage             # V
 ```
 
 ```python
+losses = result.losses(tj=110.0)  # component-resolved energy ledger, J
+losses.igbt, losses.diode         # device conduction, by kind
+losses.primary, losses.esr        # primary loop, tank capacitor ESR
+losses.winding, losses.former     # per secondary mode, and the former dielectric
+losses.total                      # conduction total, equal to result.dissipation
+losses.switching.total            # commutation energy, additive to it
+```
+
+```python
 from thirdlight.discharge import calibration
 
 machine.breakout().voltage        # top voltage that breaks the electrode out, V
@@ -48,9 +57,10 @@ calibration.operating_point(machine, streamer)   # cycle mean power, spark lengt
 ```
 
 Implemented: EM matrices and the ladder eigen-solve, the dielectric former and
-Medhurst proximity correction, the bridge, driver and exponential integrator, and
-breakout, the streamer load and its length dynamics (roadmap phases 1, 1a, 2 and
-3). Thermal models and batched GPU sweeps are not yet built.
+Medhurst proximity correction, the bridge, driver and exponential integrator,
+breakout, the streamer load and its length dynamics, and switching-energy and
+component-resolved loss extraction (roadmap phases 1, 1a, 2, 3 and 4a). Junction
+thermal networks and batched GPU sweeps are not yet built.
 
 ## Test
 

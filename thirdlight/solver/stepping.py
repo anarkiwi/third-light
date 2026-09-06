@@ -14,6 +14,7 @@ from scipy.optimize import brentq
 from thirdlight.circuit import Network, with_streamer
 from thirdlight.circuit.devices import polarity
 from thirdlight.solver.propagator import Propagator
+from thirdlight.thermal import integrate, ledger
 
 _XTOL = 1e-14
 
@@ -94,7 +95,16 @@ class Result:  # pylint: disable=too-many-instance-attributes
     @property
     def input_energy(self):
         """Energy drawn from the bus over the run, J."""
-        return _integrate(self.t, self._swing, self.primary_current)
+        return integrate(self.t, self._swing, self.primary_current)
+
+    def losses(self, tj=None):
+        """Component-resolved energy ledger, and the switching energy beside it.
+
+        :attr:`dissipation` is its conduction total; the switching energy at
+        junction temperature ``tj`` is additive to that, since the state space
+        carries no transition dynamics. See :mod:`thirdlight.thermal`.
+        """
+        return ledger(self, tj)
 
     @property
     def dissipation(self):
@@ -107,28 +117,10 @@ class Result:  # pylint: disable=too-many-instance-attributes
         """
         i = self.network.currents(self.x)
         ohmic = self.network.resistances[self.state]
-        loops = _integrate(self.t, ohmic[:-1], i * i, sums=True)
-        devices = _integrate(self.t, -self.u[:, 0], self.primary_current)
-        channel = _integrate(self.t, None, self.streamer_power)
+        loops = integrate(self.t, ohmic[:-1], i * i, sums=True)
+        devices = integrate(self.t, -self.u[:, 0], self.primary_current)
+        channel = integrate(self.t, None, self.streamer_power)
         return loops + devices + channel + float(self.loss[-1] - self.loss[0])
-
-
-def _integrate(t, weight, values, sums=False):
-    """Trapezoid of ``weight * values`` with the weight held over each interval.
-
-    The bridge polarity, the conducting device's drop and the loop resistances
-    all step at interval boundaries while the state runs on continuously, so each
-    interval is closed with its own weight rather than with an average across the
-    discontinuity. ``sums`` reduces the trailing axis, for per-loop weights.
-    """
-    values = np.asarray(values)
-    left, right = values[:-1], values[1:]
-    if weight is not None:
-        weight = np.asarray(weight)[: len(values) - 1]
-        left, right = weight * left, weight * right
-    if sums:
-        left, right = left.sum(axis=-1), right.sum(axis=-1)
-    return float((0.5 * (left + right) * np.diff(t)).sum())
 
 
 def _bracket(value, span, sign, halvings=60):

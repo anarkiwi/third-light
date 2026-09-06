@@ -48,4 +48,4 @@ disable = ["too-many-arguments", "too-many-positional-arguments", "too-many-loca
 ignored-modules = ["cupy", "scipy.special", "scipy.linalg"]
 
 [tool.pylint.basic]
-good-names = ["a", "b", "c", "d", "e", "f", "i", "j", "k", "m", "n", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "dz", "xp", "L", "C", "P", "R", "D", "N", "M", "K", "E"]
+good-names = ["E_on", "E_off", "E_rr", "a", "b", "c", "d", "e", "f", "i", "j", "k", "m", "n", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "dz", "xp", "L", "C", "P", "R", "D", "N", "M", "K", "E"]

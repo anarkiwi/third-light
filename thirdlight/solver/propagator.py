@@ -184,6 +184,37 @@ class Propagator:
             gamma = self.table.phi[j] @ gamma + self.table.gamma[j]
         return phi, gamma
 
+    def evaluator(self, x, u, functional):
+        """``s -> c x(s) + d`` over one interval, for a crossing search to bisect.
+
+        A search evaluates one functional at many sub-steps of an interval whose
+        state and held input do not move. Where the eigenbasis was accepted, the
+        state's coordinates in it and the functional's row against it are
+        constant over that interval, so each evaluation is a diagonal scaling and
+        a dot rather than the two matrix-vector products :meth:`advance` costs:
+        O(n) against O(n^2), and the two O(n^2) products are paid once.
+
+        The value at s = 0 is the one the caller started from, not a
+        reconstruction of it, since that is the value a crossing is bracketed
+        against.
+        """
+        c, d = functional
+        c = np.asarray(c, dtype=float)
+        start = float(c @ np.asarray(x, dtype=float) + d)
+        if self.eigen is None:
+            return lambda s: start if s == 0.0 else float(c @ self.advance(x, u, s) + d)
+        y = self.eigen.inverse @ np.asarray(x, dtype=float)
+        ub = self.eigen.inverse_b @ np.reshape(u, -1)
+        w = c @ self.eigen.basis
+
+        def value(s):
+            if self._checked(s) == 0.0:
+                return start
+            z = self.eigen.lam * s
+            return float((w @ (np.exp(z) * y + _phi_one(z, s) * ub)).real) + d
+
+        return value
+
     def advance(self, x, u, s=None):
         """State after ``s`` (default the nominal step) with ``u`` held across it.
 

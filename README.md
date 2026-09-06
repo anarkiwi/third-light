@@ -49,6 +49,14 @@ losses.switching.total            # commutation energy, additive to it
 ```
 
 ```python
+from thirdlight.solver import batched
+
+packed = batched.pack([machine, other, third])   # design-major, one dtype
+out = batched.run(packed, 200e-6)                # no Python in the interval loop
+out.peak_current, out.input_energy, out.dissipation   # per design
+```
+
+```python
 from thirdlight import io, viz
 
 io.to_dict(design)                    # design back to the YAML schema, defaults omitted

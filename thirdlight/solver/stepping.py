@@ -156,10 +156,7 @@ def _crossing(prop, ends, u, functional, span, sign):
         return 0.0
     if (c @ x_end + d) * sign >= 0.0:
         return math.inf
-
-    def value(s):
-        return c @ prop.advance(x, u, s) + d
-
+    value = prop.evaluator(x, u, functional)
     low = 0.0 if start != 0.0 else _bracket(value, span, sign)
     if start == 0.0 and low == 0.0:
         return 0.0

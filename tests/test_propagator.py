@@ -246,3 +246,37 @@ def test_a_zero_step_is_exact_not_reconstructed(name, cond_max):
     moved = propagator.advance(x, u, 0.0)
     assert np.array_equal(moved, x)
     assert moved is not x
+
+
+def functional(n):
+    """A random affine functional c x + d of an n-state system."""
+    return RNG.normal(size=n), 0.25
+
+
+@pytest.mark.parametrize("name", list(CASES))
+@pytest.mark.parametrize("cond_max", [1e8, 0.0])
+def test_evaluator_matches_the_advanced_functional(name, cond_max):
+    a, b, step = CASES[name]
+    propagator = Propagator.build(a, b, step, cond_max=cond_max)
+    inputs = np.reshape(np.asarray(b, dtype=float), (len(a), -1)).shape[1]
+    x, u = RNG.normal(size=len(a)), RNG.normal(size=inputs)
+    c, d = functional(len(a))
+    value = propagator.evaluator(x, u, (c, d))
+    for fraction in FRACTIONS:
+        s = fraction * step
+        moved = propagator.advance(x, u, s)
+        assert value(s) == pytest.approx(
+            c @ moved + d, rel=1e-11, abs=1e-11 * np.linalg.norm(c) * np.linalg.norm(x)
+        )
+
+
+@pytest.mark.parametrize("name", list(CASES))
+@pytest.mark.parametrize("cond_max", [1e8, 0.0])
+def test_evaluator_starts_at_the_value_it_was_given(name, cond_max):
+    """s = 0 returns the caller's own value, which is what a crossing brackets against."""
+    a, b, step = CASES[name]
+    propagator = Propagator.build(a, b, step, cond_max=cond_max)
+    inputs = np.reshape(np.asarray(b, dtype=float), (len(a), -1)).shape[1]
+    x, u = RNG.normal(size=len(a)), RNG.normal(size=inputs)
+    c, d = functional(len(a))
+    assert propagator.evaluator(x, u, (c, d))(0.0) == float(c @ x + d)

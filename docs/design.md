@@ -45,7 +45,11 @@ detailed plasma chemistry.
 1. Discretise secondary into N sections (N = 50–400), each a ring at radius
    a_k, height z_k, carrying n_k turns. Primary: one ring per turn (flat spiral,
    helical, conical). Top load: toroid or sphere surface as rings; breakout
-   point as a small sphere on the same node.
+   point as a small sphere on the same node. A conductor enters the self terms
+   only through the self geometric mean distance of its cross-section, so a
+   rectangular primary strap is the round wire of radius exp(-3/2)(w + t)
+   (Rosa [28]), exact as t/w -> 0 and 0.25 % low at worst; which side is w and which
+   is t is only which one lies along the winding axis.
 2. L matrix: L_ij = n_i n_j M_ring(a_i, a_j, |z_i − z_j|) using
    M = μ0 √(a_i a_j) [(2/κ − κ) K(κ) − (2/κ) E(κ)]; diagonal via Lyle/Rayleigh
    self-inductance of a finite-width ring. K, E via AGM in a Numba CUDA
@@ -606,6 +610,8 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 | Check | Reference | Tolerance |
 |---|---|---|
 | Single-ring and coaxial-loop inductance | closed form | 1e-10 rel |
+| Segment self GMD | ln g = ln w - 3/2, `scipy.integrate.quad` of the double integral | 1e-12 abs |
+| Rectangle self GMD | `scipy.integrate.dblquad` of ln g = <ln\|r - r'\|> over the section | Rosa 0.25 % low at worst, 0.18-0.21 % at t/w = 1, 1/2, 1/10 |
 | Solenoid inductance | Wheeler, acmi published examples | 1 % |
 | Isolated sphere and toroid capacitance | closed form; Kelvin image series for a sphere over a plane | 0.25/N, 1 % |
 | Dielectric-coated sphere capacitance | closed form for a conducting sphere in a concentric shell | 1 %, dielectric operator alone below 1e-4 |
@@ -797,3 +803,4 @@ black, pylint, PySpice (ngspice) for circuit cross-checks.
 25. openEMS. https://www.openems.de/ ; CuPy. https://docs.cupy.dev/ ; Numba CUDA. https://numba.readthedocs.io/ ; NVIDIA Warp. https://developer.nvidia.com/warp-python
 26. JavaTC. http://www.classictesla.com/java/javatc.html ; TeslaMap. https://www.teslamap.com/
 27. S. Butterworth, "Effective Resistance of Inductance Coils at Radio Frequency," *Experimental Wireless & The Wireless Engineer*, Apr./May 1926 (eq. 21, Tables I, II and IV). https://www.g6yb.com/g3ynh/zdocs/refs/
+28. E. B. Rosa, "The Self and Mutual Inductances of Linear Conductors," *Bulletin of the Bureau of Standards* 4(2), 301-344, 1908 (geometric mean distances, §§2-3). https://nvlpubs.nist.gov/nistpubs/bulletin/04/nbsbulletinv4n2p301_A2b.pdf

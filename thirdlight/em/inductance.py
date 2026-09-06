@@ -61,6 +61,28 @@ def self_ring(a, rw):
     return mu_0 * a * (math.log(8.0 * a / rw) - 2.0)
 
 
+def strip_radius(width, thickness=0.0):
+    """Equivalent round-conductor radius of a rectangular cross-section w x t.
+
+    A conductor's own flux depends on its cross-section only through the section's
+    self geometric mean distance, so a rectangle carries the self inductance of a
+    round wire of radius g = exp(-3/2) (w + t) (Rosa's approximation), which is
+    what :func:`self_ring` consumes as ``rw``. The form is exact in the thin-strip
+    limit t -> 0, where the self GMD of a segment of length w is w exp(-3/2), and
+    low by at most 0.25 % of the exact rectangle GMD elsewhere, worst near
+    t/w = 0.22; a 0.25 % error in rw moves a loop inductance by rw's logarithm,
+    parts in 10^4.
+
+    Being a property of the cross-section alone, g does not care which side lies
+    along the winding axis.
+    """
+    if width <= 0.0:
+        raise ValueError(f"width must be positive, got {width}")
+    if thickness < 0.0:
+        raise ValueError(f"thickness must be non-negative, got {thickness}")
+    return math.exp(-1.5) * (width + thickness)
+
+
 @numba.njit(cache=True, parallel=True)
 def _assemble(f):
     """Symmetric turn-level inductance matrix from stacked (a, z, n, rw) rows."""

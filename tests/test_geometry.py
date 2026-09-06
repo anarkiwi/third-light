@@ -1,8 +1,12 @@
 """Geometry discretisation invariants."""
 
+import math
+
 import numpy as np
 import pytest
 
+from thirdlight import io
+from thirdlight.em.inductance import strip_radius
 from thirdlight.geometry import Design, Primary, Rings, Solenoid, Sphere, Toroid
 
 EXAMPLE = "examples/sstc.yaml"
@@ -144,3 +148,37 @@ def test_breakout_point_loads_from_the_schema():
     )
     assert design.breakout == Sphere(radius=0.005, height=0.85)
     assert design.top_load.curvature_radius == 0.1
+
+
+def test_primary_band_sets_the_axial_extent_and_the_section_gmd():
+    """A strap on edge occupies band_width axially and conducts as its cross-section GMD."""
+    band = Primary(
+        inner_radius=0.115, turns=5.5, pitch=0.03, band_width=0.05, band_thickness=0.002
+    )
+    rings = band.discretise()
+    assert len(rings) == 6
+    assert rings.n.sum() == pytest.approx(band.turns)
+    assert np.allclose(rings.w, band.band_width)
+    assert np.allclose(rings.rw, strip_radius(0.05, 0.002))
+    assert np.allclose(rings.rw, math.exp(-1.5) * 0.052)
+    assert rings.a[0] == pytest.approx(0.115 + 0.03 * 0.5 * 5.5 / 6)
+    # A zero band_width leaves the round-wire behaviour untouched.
+    wire = Primary(inner_radius=0.115, turns=5.5, pitch=0.03, wire_diameter=0.0064)
+    assert np.allclose(wire.discretise().w, 0.0064)
+    assert np.allclose(wire.discretise().rw, 0.0032)
+
+
+def test_a_band_thickness_without_a_width_is_rejected():
+    with pytest.raises(ValueError, match="band_thickness needs a band_width"):
+        Primary(inner_radius=0.115, turns=1.0, band_thickness=0.002)
+
+
+def test_a_band_primary_round_trips_through_a_mapping():
+    design = Design(
+        Solenoid(0.076, 0.5, 900, 4e-4),
+        Primary(inner_radius=0.2, turns=1.0, band_width=0.075, band_thickness=0.0015),
+    )
+    spec = io.to_dict(design)
+    assert spec["primary"]["band_width"] == 0.075
+    assert "wire_diameter" not in spec["primary"]
+    assert Design.from_dict(spec) == design

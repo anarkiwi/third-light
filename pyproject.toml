@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda = ["cupy-cuda12x>=13.0"]
+cuda = ["cupy-cuda12x>=14.2.0"]
 io = ["xarray>=2026.7.0", "pandas>=3.0.5", "pyarrow>=25.0.1"]
 viz = ["matplotlib>=3.11.1"]
 dev = [

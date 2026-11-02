@@ -7,7 +7,7 @@ name = "thirdlight"
 version = "0.1.0"
 description = "Multiphysics solid-state Tesla coil simulator"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
     "numpy>=2.4.6",
@@ -38,7 +38,7 @@ markers = [
 ]
 
 [tool.black]
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.pylint.main]
 jobs = 0
